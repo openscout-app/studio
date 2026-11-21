@@ -16,7 +16,8 @@ From a clone:
 
 ```sh
 npm install
-npm start          # builds nothing; run `npm run build` first, or `npm run dev` for hot reload
+npm run build
+npm start          # or `npm run dev` for hot reload
 ```
 
 You need:
