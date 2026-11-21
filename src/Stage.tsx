@@ -1,0 +1,209 @@
+// One screen, full size. With a before, a wipe lays the two over each other. Click or right-click
+// anywhere on the screen to pin a note there; Scout takes it to the session that took the screen,
+// and the thread beside it shows how that went and what the session said back.
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ago, api, img, type Note, type Screen, type Session, type Project } from "./api";
+import { Working, kindOf } from "./Canvas";
+
+type Props = {
+  session: Session; project: Project; screens: Screen[]; index: number; notes: Note[];
+  at?: { x: number; y: number }; scoutUp: boolean;
+  onIndex: (i: number) => void; onClose: () => void; onNotes: () => void;
+};
+
+/** Text fields and notes keep the browser's own menu; everywhere else a right-click places a note. */
+const ownMenu = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.("textarea, input, [data-note]");
+
+export function Stage({ session, project, screens, index, notes, at, scoutUp, onIndex, onClose, onNotes }: Props) {
+  const sc = screens[index];
+  const shot = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  const [draft, setDraft] = useState<{ x: number; y: number } | null>(at ?? null);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [wipe, setWipe] = useState(0.5);
+  const [compare, setCompare] = useState(true);
+  const [current, setCurrent] = useState<string | null>(null);
+  const mine = notes.filter((n) => n.session === session.id && n.screen.hash === sc.hash);
+
+  useEffect(() => { setDraft(at ?? null); setText(""); setWipe(0.5); setCurrent(null); }, [sc.id]);
+
+  useLayoutEffect(() => {
+    const el = shot.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBox({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [sc.id]);
+
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).closest("textarea, input")) return;
+      if (e.key === "Escape") { if (draft) setDraft(null); else onClose(); }
+      if (e.key === "ArrowLeft" && index > 0) onIndex(index - 1);
+      if (e.key === "ArrowRight" && index < screens.length - 1) onIndex(index + 1);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [draft, index, screens.length]);
+
+  const pointOf = (e: React.MouseEvent) => {
+    const r = shot.current!.getBoundingClientRect();
+    return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+  };
+  const place = (e: React.MouseEvent) => {
+    if (ownMenu(e.target) || (e.target as HTMLElement).closest(".wipe, .pin-big")) return;
+    e.preventDefault();
+    setDraft(pointOf(e));
+    setCurrent(null);
+  };
+
+  const dragWipe = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const r = shot.current!.getBoundingClientRect();
+    const move = (ev: PointerEvent) => setWipe(Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)));
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const submit = async () => {
+    if (!draft || !text.trim()) return;
+    setBusy(true);
+    try {
+      const { note } = await api.add({ session: session.id, project: project.name, cwd: session.cwd, screen: sc, x: draft.x, y: draft.y, text });
+      setDraft(null); setText(""); setCurrent(note.id); onNotes();
+    } finally { setBusy(false); }
+  };
+
+  const showBefore = !!sc.before && compare;
+  const left = draft && draft.x > 0.6;
+
+  return (
+    <div className="stage" role="dialog" aria-label="Screen" onContextMenu={(e) => { if (!ownMenu(e.target) && !shot.current?.contains(e.target as Node)) e.preventDefault(); }}>
+      <div className="stage-bar">
+        <button className="ghost" onClick={onClose}>Close</button>
+        <span className="title">{session.title}</span>
+        <span className="where">{project.name}{session.branch ? ` · ${session.branch}` : ""} · {sc.url || sc.file || kindOf(sc)}</span>
+        <span style={{ flex: 1 }} />
+        {sc.before && (
+          <button className={`ghost${compare ? " accent" : ""}`} onClick={() => setCompare((v) => !v)} aria-pressed={compare}>
+            {compare ? "Comparing with before" : "Compare with before"}
+          </button>
+        )}
+        <span className="mono" style={{ color: "var(--dim)" }}>{index + 1} of {screens.length}</span>
+      </div>
+      <div className="stage-main">
+        {index > 0 && <button className="ghost nav prev" onClick={() => onIndex(index - 1)} aria-label="Newer screen">←</button>}
+        {index < screens.length - 1 && <button className="ghost nav next" onClick={() => onIndex(index + 1)} aria-label="Older screen">→</button>}
+        <div className="shot" ref={shot} onClick={place} onContextMenu={place}>
+          <img src={img(sc)} alt="" draggable={false} />
+          {showBefore && (
+            <>
+              <div className="before" style={{ width: `${wipe * 100}%` }}>
+                <img src={img(sc.before!)} alt="" draggable={false} style={{ width: box.w, height: box.h }} />
+              </div>
+              <div className="wipe" style={{ left: `${wipe * 100}%` }} onPointerDown={dragWipe} onClick={(e) => e.stopPropagation()}>
+                <span><b>before · {ago(sc.before!.at)}</b><b>after</b></span>
+              </div>
+            </>
+          )}
+          {mine.map((n, i) => (
+            <button
+              key={n.id} data-note className={`pin-big${n.kept ? " done" : ""}${live(n, session) ? " live" : ""}`}
+              style={{ left: `${n.x * 100}%`, top: `${n.y * 100}%` }} aria-current={current === n.id}
+              onClick={(e) => { e.stopPropagation(); setCurrent(n.id); setDraft(null); }} title={n.text}
+            >{i + 1}</button>
+          ))}
+          {draft && (
+            <>
+              <span className="pin-big" style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%`, opacity: 0.7 }} />
+              <div
+                className="composer" data-note onClick={(e) => e.stopPropagation()}
+                style={{ top: `calc(${draft.y * 100}% - 12px)`, ...(left ? { right: `calc(${(1 - draft.x) * 100}% + 18px)` } : { left: `calc(${draft.x * 100}% + 18px)` }) }}
+              >
+                <textarea
+                  autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={`A note for ${session.title.slice(0, 40)}`}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+                    if (e.key === "Escape") { e.stopPropagation(); setDraft(null); }
+                  }}
+                />
+                <div className="row">
+                  <span>{scoutUp ? (session.open ? "Scout takes it to the session now" : "The session is closed; it waits for it") : "Scout isn't running; it waits for Scout"}</span>
+                  <button className="primary" disabled={!text.trim() || busy} onClick={submit}>Send</button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      <aside className="side" data-note>
+        <div>
+          <h3>Session</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+            {session.working ? <Working /> : <span className={`dot${session.open ? " ok" : ""}`} />}
+            <span>{session.working ? "Working now" : session.open ? "Open" : "Closed"} · last active {ago(session.lastAt)}</span>
+          </div>
+          <div className="hint mono" style={{ marginTop: 4 }}>{session.cwd.replace(/^\/Users\/[^/]+/, "~")}</div>
+        </div>
+        {sc.caption && (
+          <div>
+            <h3>What it said · {ago(sc.at)}</h3>
+            <div className="said" style={{ marginTop: 6 }}>{sc.caption}</div>
+          </div>
+        )}
+        <div style={{ display: "grid", gap: 10 }}>
+          <h3>Notes on this screen</h3>
+          {!mine.length && <div className="hint">Click or right-click anywhere on the screen to pin a note. Scout takes it to this session, and its answer shows here.</div>}
+          {mine.map((n, i) => <Thread key={n.id} n={n} i={i + 1} session={session} project={project} current={current === n.id} onFocus={() => setCurrent(n.id)} onNotes={onNotes} />)}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+/** A note out with its session while that session works on it. */
+function live(n: Note, s: Session) {
+  return !n.kept && !!n.arrivedAt && !n.answers.length && s.working;
+}
+
+function status(n: Note, s: Session, project: Project): { text: string; tone: "" | "ok" | "bad" | "accent"; working?: boolean } {
+  if (n.kept) return { text: "Done", tone: "" };
+  const last = n.trail.at(-1);
+  if (!last) return { text: "Scout is taking it to the session…", tone: "accent", working: true };
+  if (last.what === "handed") return { text: `Handed to a new Claude session in ${project.name}${last.task ? ` (${last.task})` : ""}`, tone: "ok" };
+  if (last.what === "sent") {
+    if (n.answers.length) return { text: `Answered ${ago(n.answers.at(-1)!.at)}`, tone: "ok" };
+    if (n.arrivedAt) return s.working ? { text: "It arrived; the session is on it", tone: "accent", working: true } : { text: "It arrived; no answer yet", tone: "" };
+    return { text: `Sent through Scout ${ago(last.at)}`, tone: "ok" };
+  }
+  if (last.what === "waiting") return { text: "Waiting: the session isn't open. Scout tries again every 20 seconds.", tone: "" };
+  return { text: `Scout couldn't send it: ${last.why}${(n.tries || 0) >= 6 ? ". Stopped trying." : ". Trying again."}`, tone: "bad" };
+}
+
+function Thread({ n, i, session, project, current, onFocus, onNotes }: { n: Note; i: number; session: Session; project: Project; current: boolean; onFocus: () => void; onNotes: () => void }) {
+  const st = status(n, session, project);
+  const last = n.trail.at(-1)?.what;
+  const act = (p: Promise<unknown>) => p.finally(onNotes);
+  return (
+    <div className="thread" aria-current={current} onClick={onFocus}>
+      <div className="who"><b>#{i} You</b><span>{ago(n.at)}</span></div>
+      <div className="text">{n.text}</div>
+      {n.answers.map((a, k) => (
+        <div key={k}>
+          <div className="who"><b>{session.title.slice(0, 40)}</b><span>{ago(a.at)}</span></div>
+          <div className="answer">{a.text}</div>
+        </div>
+      ))}
+      <div className="status">{st.working ? <Working /> : <span className={`dot ${st.tone}`} />}<span>{st.text}</span></div>
+      <div className="actions">
+        {(last === "waiting" || last === "failed") && !n.kept && <button className="ghost accent" onClick={() => act(api.handOff(n.id))}>Hand to a new session</button>}
+        {last === "failed" && !n.kept && <button className="ghost" onClick={() => act(api.retry(n.id))}>Retry</button>}
+        <button className="ghost" onClick={() => act(api.keep(n.id, !n.kept))}>{n.kept ? "Reopen" : "Done"}</button>
+        <button className="ghost" onClick={() => act(api.remove(n.id))}>Delete</button>
+      </div>
+    </div>
+  );
+}

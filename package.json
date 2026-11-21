@@ -1,0 +1,28 @@
+{
+  "name": "scout-canvas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "What your agents make, on Scout's canvas. Pin a note on a screen and Scout takes it to the session that made it.",
+  "type": "module",
+  "bin": { "scout-canvas": "bin/scout-canvas.mjs" },
+  "files": ["bin", "server", "dist"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "start": "node bin/scout-canvas.mjs",
+    "test": "node --test server/*.test.mjs",
+    "prepare": "vite build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "4.7.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "5.9.3",
+    "vite": "6.4.6"
+  }
+}
