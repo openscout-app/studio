@@ -26,9 +26,11 @@ function steps(data: CanvasData | null, hours: number, ready: boolean, returning
   ];
 }
 
-export function Arrival({ data, error, hours, filtered, ready, returning, landedOn, children }: {
+export function Arrival({ data, error, hours, filtered, ready, returning, landedOn, controls, children }: {
   data: CanvasData | null; error: string | null; hours: number; filtered: boolean; ready: boolean;
-  returning?: "back" | "link"; landedOn?: string; children: ReactNode;
+  returning?: "back" | "link"; landedOn?: string;
+  /** what floats over the canvas once it shows, and over "nothing matches" so a filter can be undone */
+  controls?: ReactNode; children: ReactNode;
 }) {
   // how many steps have checked off; each waits for the one before and for its own condition
   const [checked, setChecked] = useState(0);
@@ -45,11 +47,14 @@ export function Arrival({ data, error, hours, filtered, ready, returning, landed
   const empty = !!data && data.loading.done && !ready;
   if (error && !data) return <Message title="The canvas couldn't load" text={error} />;
   if (empty && checked >= 2) {
-    return <Message title="No screens here" text={filtered ? "Nothing matches. Clear the search or the filter." : `No Claude Code session took a screen ${steps(data, hours, false)[1].detail?.replace(/^\d+ sessions? /, "")}.`} />;
+    return <>
+      <Message title="No screens here" text={filtered ? "Nothing matches. Clear the search, or show more with the controls at the top right." : `No Claude Code session took a screen ${steps(data, hours, false)[1].detail?.replace(/^\d+ sessions? /, "")}.`} />
+      {controls}
+    </>;
   }
   return (
     <div className="arrival-wrap">
-      {arrived && <div className="landed">{children}</div>}
+      {arrived && <div className="landed">{children}{controls}</div>}
       {!arrived && (
         <div className="arrival" role="status" aria-live="polite">
           <svg className="glyph" viewBox="5 -4 214 244" aria-hidden="true">

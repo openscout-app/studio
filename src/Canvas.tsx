@@ -8,6 +8,8 @@ import { savePlace } from "./place";
 export type Cam = { x: number; y: number; k: number };
 const K_MIN = 0.1, K_MAX = 2;
 const clampK = (k: number) => Math.min(K_MAX, Math.max(K_MIN, k));
+/** where a landing puts the top of what it lands on: below the controls floating over the canvas */
+const TOP = 60;
 
 /** Where a point on a card's cropped picture falls on the whole screen, as fractions. */
 export function cardPoint(s: Screen, px: number, py: number) {
@@ -73,7 +75,7 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened }:
   };
   const fitCam = (): Cam => {
     const k = clampK(Math.min((size.w - 40) / bounds.w, 1));
-    return { x: (size.w - bounds.w * k) / 2, y: 12, k };
+    return { x: (size.w - bounds.w * k) / 2, y: TOP, k };
   };
   const fit = () => moveTo(fitCam());
   // land: back where you were, or on the latest session, readable, gliding in from a little further out
@@ -86,8 +88,8 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened }:
       return setCam({ k, x: focus.at.sx - b.x * k, y: focus.at.sy - b.y * k });
     }
     const k = clampK(Math.min(1, (size.w - 96) / b.w));
-    const to = { k, x: (size.w - b.w * k) / 2 - b.x * k, y: 16 - b.y * k };
-    const from = { k: k * 0.86, x: (size.w - b.w * k * 0.86) / 2 - b.x * k * 0.86, y: 40 - b.y * k * 0.86 };
+    const to = { k, x: (size.w - b.w * k) / 2 - b.x * k, y: TOP - b.y * k };
+    const from = { k: k * 0.86, x: (size.w - b.w * k * 0.86) / 2 - b.x * k * 0.86, y: TOP + 24 - b.y * k * 0.86 };
     setCam(from);
     moveTo(to, from);
   }, [focus, size.w, bounds.w]);
@@ -154,6 +156,12 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened }:
     return m;
   }, [notes]);
 
+  // each session at work shows its cursor on the screen it took last
+  const working = useMemo(() => areas.filter((a) => a.session.working && a.cards.length).map((a) => {
+    const b = a.cards[0].box;
+    return { area: a, at: { x: b.x + b.w - 40, y: b.y + MEDIA_TIP } };
+  }), [areas]);
+
   if (!cam) return <div className="viewport" ref={view} />;
   const margin = 400 / cam.k;
   const vis = { x: -cam.x / cam.k - margin, y: -cam.y / cam.k - margin, w: size.w / cam.k + 2 * margin, h: size.h / cam.k + 2 * margin };
@@ -174,13 +182,99 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened }:
         {frames.flatMap((f) => f.areas).filter((a) => inView(a.box)).map((a) => (
           <AreaView key={a.session.id} area={a} inView={inView} byScreen={byScreen} moved={moved} onOpen={onOpen} onMore={onMore} opened={opened.has(a.session.id)} />
         ))}
+        {working.filter((w) => inView(w.area.box)).map((w) => (
+          <AgentCursor key={w.area.session.id} at={w.at} k={cam.k} say={w.area.session.title} flip={w.at.x > bounds.w - 320} />
+        ))}
       </div>
+      <Minimap frames={frames} bounds={bounds} cam={cam} size={size} agents={working.map((w) => w.at)}
+        onJump={(x, y, ease) => { const to = { k: cam.k, x: size.w / 2 - x * cam.k, y: size.h / 2 - y * cam.k }; ease ? moveTo(to) : (cancelAnimationFrame(glide.current), setCam(to)); }} />
       <div className="zoom" onPointerDown={(e) => e.stopPropagation()}>
         <span className="mono">{Math.round(cam.k * 100)}%</span>
         <button className="ghost" onClick={() => zoomBy(1 / 1.25)} aria-label="Zoom out">−</button>
         <button className="ghost" onClick={() => zoomBy(1.25)} aria-label="Zoom in">+</button>
         <button className="ghost" onClick={fit}>Fit</button>
       </div>
+    </div>
+  );
+}
+
+/* ---- an agent's cursor, as on Scout's canvas (scout-apps canvas/marks.tsx, shape J17) */
+
+/** A polygon whose corners ease by a quadratic curve, each inset by its radius or 44% of the shorter edge. */
+function roundedPolygon(vs: [number, number, number][]): string {
+  const n = vs.length;
+  const toward = (a: number[], b: number[], d: number) => {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    return len < 0.001 ? [a[0], a[1]] : [a[0] + ((b[0] - a[0]) / len) * d, a[1] + ((b[1] - a[1]) / len) * d];
+  };
+  const corners = vs.map((c, i) => {
+    const prev = vs[(i - 1 + n) % n], next = vs[(i + 1) % n];
+    const inset = Math.min(c[2], Math.hypot(c[0] - prev[0], c[1] - prev[1]) * 0.44, Math.hypot(c[0] - next[0], c[1] - next[1]) * 0.44);
+    return { inc: toward(c, prev, inset), out: toward(c, next, inset), ctl: [c[0], c[1]] };
+  });
+  const f = (pt: number[]) => `${pt[0].toFixed(2)} ${pt[1].toFixed(2)}`;
+  let d = `M${f(corners[0].out)}`;
+  for (const c of [...corners.slice(1), corners[0]]) d += ` L${f(c.inc)} Q${f(c.ctl)} ${f(c.out)}`;
+  return `${d} Z`;
+}
+/** The tip at 0,0 is the hotspot. */
+const CURSOR_D = roundedPolygon([[0, 0, 4.5], [37.5, 28.2, 8], [18.3, 34.4, 5], [2.5, 48.2, 8]]);
+/** where a cursor points on a card: in its picture, a little below the top */
+const MEDIA_TIP = 64;
+
+/** `k` is the camera's scale: the cursor keeps its size on screen. */
+function AgentCursor({ at, k, say, flip }: { at: { x: number; y: number }; k: number; say: string; flip: boolean }) {
+  const shape = { d: CURSOR_D, vectorEffect: "non-scaling-stroke" as const };
+  return (
+    <div className={`agent-cursor${flip ? " flip" : ""}`} style={{ left: at.x, top: at.y, scale: `${1 / k}` }} aria-label={`Claude is working: ${say}`}>
+      <div className="drift">
+        <svg width="32" height="36" viewBox="-6 -3 32 36" aria-hidden="true">
+          <g className="sway" transform="scale(0.6)">
+            <path {...shape} className="edge" />
+            <path {...shape} className="fill" />
+            <path {...shape} className="light" />
+          </g>
+        </svg>
+        <span className="tag"><span className="who">Claude</span>{k < 0.6 && <span className="say">{say}</span>}<Working /></span>
+      </div>
+    </div>
+  );
+}
+
+/** The whole canvas, small: frames, sessions, agents at work and what's in view. Click or drag to go there. */
+function Minimap({ frames, bounds, cam, size, agents, onJump }: {
+  frames: Frame[]; bounds: Box; cam: Cam; size: { w: number; h: number }; agents: { x: number; y: number }[];
+  onJump: (x: number, y: number, glide: boolean) => void;
+}) {
+  const W = 168, MAX_H = 120;
+  const s = W / Math.max(1, bounds.w);
+  const full = bounds.h * s, H = Math.min(MAX_H, full);
+  const view = { x: -cam.x / cam.k * s, y: -cam.y / cam.k * s, w: size.w / cam.k * s, h: size.h / cam.k * s };
+  // a canvas taller than the minimap scrolls in it, keeping what's in view inside
+  const off = Math.min(Math.max(0, full - H), Math.max(0, view.y + view.h / 2 - H / 2));
+  const jump = (e: React.PointerEvent, glide: boolean) => {
+    const r = (e.currentTarget as HTMLElement).querySelector("svg")!.getBoundingClientRect();
+    onJump((e.clientX - r.left) / s, (e.clientY - r.top + off) / s, glide);
+  };
+  return (
+    <div className="minimap" aria-label="Map of the canvas"
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        jump(e, true);
+      }}
+      onPointerMove={(e) => { if (e.buttons & 1) jump(e, false); }}
+    >
+      <svg width={W} height={H} viewBox={`0 ${off} ${W} ${H}`}>
+        {frames.map((f) => (
+          <g key={f.project.root}>
+            <rect className="m-frame" x={f.box.x * s} y={f.box.y * s} width={f.box.w * s} height={f.box.h * s} rx={2} />
+            {f.areas.map((a) => <rect key={a.session.id} className="m-area" x={a.box.x * s} y={(a.box.y + 40) * s} width={a.box.w * s} height={Math.max(1, (a.box.h - 40) * s)} rx={1} />)}
+          </g>
+        ))}
+        {agents.map((p, i) => <circle key={i} className="m-agent" cx={p.x * s} cy={p.y * s} r={2.5} />)}
+        <rect className="m-view" x={view.x} y={view.y} width={view.w} height={view.h} rx={2} />
+      </svg>
     </div>
   );
 }

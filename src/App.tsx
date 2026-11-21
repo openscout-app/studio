@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type CanvasData, type Note, type Pointer, type Screen } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, type CanvasData, type Note, type Pointer, type Screen, type Session } from "./api";
 import { Canvas } from "./Canvas";
 import { Arrival, Progress } from "./Loading";
 import { Stage } from "./Stage";
 import { layout, type Area } from "./scene";
 import { readPlace } from "./place";
+import { NO_VIEW, ViewControls, type Filter, type View } from "./Controls";
 
-const WINDOWS = [{ h: 24, label: "Today" }, { h: 72, label: "3 days" }, { h: 168, label: "Week" }];
-type Filter = "all" | "notes" | "changed";
+function readView(): View {
+  try { return { ...NO_VIEW, ...JSON.parse(localStorage.getItem("scout-canvas:view") || "{}") }; } catch { return NO_VIEW; }
+}
 /** What's open: a session, maybe one of its screens, and a point a right-click or a pointer gave. */
 type Open = { session: string; hash?: string; at?: { x: number; y: number }; pointer?: Pointer };
 
@@ -26,6 +28,21 @@ export function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  // which projects and agents show, kept between visits
+  const [view, setView] = useState<View>(readView);
+  useEffect(() => { try { localStorage.setItem("scout-canvas:view", JSON.stringify(view)); } catch {} }, [view]);
+  const viewing = view.hiddenProjects.length > 0 || view.hiddenSessions.length > 0 || view.agents !== "all";
+  // "/" goes to the search, as on Scout
+  const find = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.key === "/" && !/^(INPUT|TEXTAREA)$/.test(t.tagName) && !t.isContentEditable) { e.preventDefault(); find.current?.focus(); }
+      if (e.key === "Escape" && t === find.current) { setQuery(""); find.current?.blur(); }
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<Open | null>(readHash);
   // the session a link was opened for; it stays after its screen is closed, so the canvas stays put
@@ -80,15 +97,18 @@ export function App() {
   const scene = useMemo(() => {
     if (!data) return null;
     // a search matches a screen by its project, its session's title and prompt, or its own words
+    // and the projects and agents picked to show; a session a link opened always shows
+    const hp = new Set(view.hiddenProjects), hs = new Set(view.hiddenSessions);
+    const agent = (s: Session) => s.id === linked || (!hs.has(s.id) && (view.agents === "all" || (view.agents === "open" ? s.open : s.working)));
     const shaped = {
       ...data,
-      projects: data.projects.map((p) => ({
+      projects: data.projects.filter((p) => !hp.has(p.root) || p.sessions.some((s) => s.id === linked)).map((p) => ({
         ...p,
-        sessions: p.sessions.map((s) => ({ ...s, screens: s.screens.filter((sc) => keep(sc, `${p.name} ${s.title} ${s.prompt}`)) })),
+        sessions: p.sessions.filter(agent).map((s) => ({ ...s, screens: s.screens.filter((sc) => keep(sc, `${p.name} ${s.title} ${s.prompt}`)) })),
       })),
     };
     return layout(shaped, opened);
-  }, [data, opened, keep]);
+  }, [data, opened, keep, view, linked]);
   // land back where you were if that session is in this window, else on the latest session. Sessions
   // are read newest first, so yours usually shows within a moment; past a short wait, take the latest.
   const place = useMemo(readPlace, [hours]);
@@ -144,41 +164,42 @@ export function App() {
   return (
     <div className="app">
       <header className="bar">
-        <a className="brand" href="/" aria-label="Scout Canvas">
-          <span className="lockup" role="img" aria-label="Scout" />
-          <span className="product">Canvas</span>
-        </a>
-        <span className="sep" />
-        <div className="seg" role="group" aria-label="How far back">
-          {WINDOWS.map((w) => <button key={w.h} aria-pressed={hours === w.h} onClick={() => setHours(w.h)}>{w.label}</button>)}
+        <div className="bar-side">
+          <a className="brand" href="/" aria-label="Scout Canvas">
+            <span className="lockup" role="img" aria-label="Scout" />
+            <span className="product">Canvas</span>
+          </a>
         </div>
-        <div className="seg" role="group" aria-label="Which screens">
-          <button aria-pressed={filter === "all"} onClick={() => setFilter("all")}>All</button>
-          <button aria-pressed={filter === "changed"} onClick={() => setFilter("changed")}>Before / after</button>
-          <button aria-pressed={filter === "notes"} onClick={() => setFilter("notes")}>With notes</button>
-        </div>
-        <input className="search" placeholder="Search screens, sessions, repos" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <span className="grow" />
-        {data && (
-          <span className="chip counts">
-            {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
-            {counts.sessions} sessions · {counts.screens} screens · {counts.changed} before / after
+        <label className="find">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.8" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="m10.6 10.6 3.4 3.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+          <input ref={find} className="search" placeholder="Search screens, sessions, repos" aria-label="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <kbd aria-hidden="true">/</kbd>
+        </label>
+        <div className="bar-side end">
+          {data && (
+            <span className="chip counts">
+              {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
+              {counts.sessions} sessions
+            </span>
+          )}
+          {data && <span className="sep" />}
+          <span className="chip" title={data?.scout.up ? "Scout's runtime answers on this Mac; notes go to sessions through it" : "Scout's runtime isn't answering; notes wait until it is"}>
+            <span className={`dot ${data ? (data.scout.up ? "ok" : "bad") : ""}`} />
+            {data ? (data.scout.up ? "Scout is up" : "Scout isn't running") : "Looking for Scout…"}
           </span>
-        )}
-        <span className="sep" />
-        <span className="chip" title={data?.scout.up ? "Scout's runtime answers on this Mac; notes go to sessions through it" : "Scout's runtime isn't answering; notes wait until it is"}>
-          <span className={`dot ${data ? (data.scout.up ? "ok" : "bad") : ""}`} />
-          {data ? (data.scout.up ? "Scout is up" : "Scout isn't running") : "Looking for Scout…"}
-        </span>
+        </div>
       </header>
-      <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all"} ready={ready}
-        returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}>
-        {scene && ready && (
-          <Canvas key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened}
-            onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
-        )}
-        {data && <Progress loading={data.loading} counts={counts} />}
-      </Arrival>
+      <main className="field">
+        <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all" || viewing} ready={ready}
+          returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
+          controls={data && <ViewControls data={data} hours={hours} setHours={setHours} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
+          {scene && ready && (
+            <Canvas key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened}
+              onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
+          )}
+          {data && <Progress loading={data.loading} counts={counts} />}
+        </Arrival>
+      </main>
       {missing && <div className="toast" role="alert" onClick={() => { setMissing(null); history.replaceState(null, "", "/"); }}>{missing}</div>}
       {target && open && (
         <Stage
