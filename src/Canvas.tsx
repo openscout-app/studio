@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ago, thumb, type Note, type Screen } from "./api";
 import { CARD_W, MEDIA_H, type Area, type Box, type Frame } from "./scene";
 import { savePlace } from "./place";
+import { HarnessCoin } from "./Harness";
 
 export type Cam = { x: number; y: number; k: number };
 const K_MIN = 0.1, K_MAX = 2;
@@ -186,14 +187,8 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened }:
           <AgentCursor key={w.area.session.id} at={w.at} k={cam.k} say={w.area.session.title} flip={w.at.x > bounds.w - 320} />
         ))}
       </div>
-      <Minimap frames={frames} bounds={bounds} cam={cam} size={size} agents={working.map((w) => w.at)}
-        onJump={(x, y, ease) => { const to = { k: cam.k, x: size.w / 2 - x * cam.k, y: size.h / 2 - y * cam.k }; ease ? moveTo(to) : (cancelAnimationFrame(glide.current), setCam(to)); }} />
-      <div className="zoom" onPointerDown={(e) => e.stopPropagation()}>
-        <span className="mono">{Math.round(cam.k * 100)}%</span>
-        <button className="ghost" onClick={() => zoomBy(1 / 1.25)} aria-label="Zoom out">−</button>
-        <button className="ghost" onClick={() => zoomBy(1.25)} aria-label="Zoom in">+</button>
-        <button className="ghost" onClick={fit}>Fit</button>
-      </div>
+      <MapDock frames={frames} bounds={bounds} cam={cam} size={size} agents={working.map((w) => w.at)}
+        setCam={(c) => { cancelAnimationFrame(glide.current); setCam(c); }} zoomBy={zoomBy} fit={fit} />
     </div>
   );
 }
@@ -235,46 +230,126 @@ function AgentCursor({ at, k, say, flip }: { at: { x: number; y: number }; k: nu
             <path {...shape} className="light" />
           </g>
         </svg>
-        <span className="tag"><span className="who">Claude</span>{k < 0.6 && <span className="say">{say}</span>}<Working /></span>
+        <span className="tag"><HarnessCoin size={16} /><span className="who">Claude</span>{k < 0.6 && <span className="say">{say}</span>}<Working /></span>
       </div>
     </div>
   );
 }
 
-/** The whole canvas, small: frames, sessions, agents at work and what's in view. Click or drag to go there. */
-function Minimap({ frames, bounds, cam, size, agents, onJump }: {
-  frames: Frame[]; bounds: Box; cam: Cam; size: { w: number; h: number }; agents: { x: number; y: number }[];
-  onJump: (x: number, y: number, glide: boolean) => void;
-}) {
-  const W = 168, MAX_H = 120;
-  const s = W / Math.max(1, bounds.w);
-  const full = bounds.h * s, H = Math.min(MAX_H, full);
-  const view = { x: -cam.x / cam.k * s, y: -cam.y / cam.k * s, w: size.w / cam.k * s, h: size.h / cam.k * s };
-  // a canvas taller than the minimap scrolls in it, keeping what's in view inside
-  const off = Math.min(Math.max(0, full - H), Math.max(0, view.y + view.h / 2 - H / 2));
-  const jump = (e: React.PointerEvent, glide: boolean) => {
-    const r = (e.currentTarget as HTMLElement).querySelector("svg")!.getBoundingClientRect();
-    onJump((e.clientX - r.left) / s, (e.clientY - r.top + off) / s, glide);
+/*
+ * The minimap and zoom, one unit at the bottom left, as on Scout's canvas (scout-apps canvas/Minimap.tsx and
+ * minimap-frame.ts): the map, a seam, then the zoom row. Click the map to go there, drag the frame to pan, scroll on
+ * it to zoom; with it focused, arrow keys pan and + and − zoom.
+ */
+const MAP_MAX = 196, MAP_MIN = 56, MAP_PAD = 6;
+
+/** The scene shrunk into a box no larger than MAP_MAX on a side, shaped like the scene. */
+function mapFrame(bounds: Box) {
+  const bw = Math.max(1, bounds.w), bh = Math.max(1, bounds.h);
+  const fit = (MAP_MAX - MAP_PAD * 2) / Math.max(bw, bh);
+  const w = Math.max(MAP_MIN, Math.round(bw * fit + MAP_PAD * 2)), h = Math.max(MAP_MIN, Math.round(bh * fit + MAP_PAD * 2));
+  const scale = Math.min((w - MAP_PAD * 2) / bw, (h - MAP_PAD * 2) / bh);
+  const ox = (w - bw * scale) / 2 - bounds.x * scale, oy = (h - bh * scale) / 2 - bounds.y * scale;
+  return {
+    w, h,
+    toMap: (b: Box): Box => ({ x: b.x * scale + ox, y: b.y * scale + oy, w: b.w * scale, h: b.h * scale }),
+    toWorld: (x: number, y: number) => ({ x: (x - ox) / scale, y: (y - oy) / scale }),
   };
+}
+
+function Glyph({ d }: { d: string }) {
   return (
-    <div className="minimap" aria-label="Map of the canvas"
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-        jump(e, true);
-      }}
-      onPointerMove={(e) => { if (e.buttons & 1) jump(e, false); }}
-    >
-      <svg width={W} height={H} viewBox={`0 ${off} ${W} ${H}`}>
-        {frames.map((f) => (
-          <g key={f.project.root}>
-            <rect className="m-frame" x={f.box.x * s} y={f.box.y * s} width={f.box.w * s} height={f.box.h * s} rx={2} />
-            {f.areas.map((a) => <rect key={a.session.id} className="m-area" x={a.box.x * s} y={(a.box.y + 40) * s} width={a.box.w * s} height={Math.max(1, (a.box.h - 40) * s)} rx={1} />)}
-          </g>
-        ))}
-        {agents.map((p, i) => <circle key={i} className="m-agent" cx={p.x * s} cy={p.y * s} r={2.5} />)}
-        <rect className="m-view" x={view.x} y={view.y} width={view.w} height={view.h} rx={2} />
-      </svg>
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
+function MapDock({ frames, bounds, cam, size, agents, setCam, zoomBy, fit }: {
+  frames: Frame[]; bounds: Box; cam: Cam; size: { w: number; h: number }; agents: { x: number; y: number }[];
+  setCam: (c: Cam) => void; zoomBy: (f: number) => void; fit: () => void;
+}) {
+  const map = useMemo(() => mapFrame(bounds), [bounds]);
+  const seen = map.toMap({ x: -cam.x / cam.k, y: -cam.y / cam.k, w: size.w / cam.k, h: size.h / cam.k });
+  const ref = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ id: number; dx: number; dy: number } | null>(null);
+  const latest = useRef({ cam, size, setCam, zoomBy, map });
+  latest.current = { cam, size, setCam, zoomBy, map };
+
+  const pointAt = (e: { clientX: number; clientY: number }) => {
+    const r = ref.current!.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (map.w / r.width), y: (e.clientY - r.top) * (map.h / r.height) };
+  };
+  const goTo = (x: number, y: number) => {
+    const { cam, size, setCam, map } = latest.current;
+    const p = map.toWorld(x, y);
+    setCam({ k: cam.k, x: size.w / 2 - p.x * cam.k, y: size.h / 2 - p.y * cam.k });
+  };
+  // scrolling on the map zooms; it is read here first, so the canvas under it doesn't pan too
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault(); e.stopPropagation();
+      if (drag.current) return;
+      const unit = e.deltaMode === 1 ? 16 : 1;
+      latest.current.zoomBy(Math.exp(-Math.max(-100, Math.min(100, e.deltaY * unit)) * 0.0026));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  const down = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || drag.current) return;
+    e.preventDefault();
+    e.currentTarget.focus({ preventScroll: true });
+    const p = pointAt(e);
+    const inside = p.x >= seen.x && p.x <= seen.x + seen.w && p.y >= seen.y && p.y <= seen.y + seen.h;
+    // grabbing the frame keeps the grip where it was taken; anywhere else, the view jumps there first
+    drag.current = { id: e.pointerId, dx: inside ? seen.x + seen.w / 2 - p.x : 0, dy: inside ? seen.y + seen.h / 2 - p.y : 0 };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    if (!inside) goTo(p.x, p.y);
+  };
+  const move = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d || d.id !== e.pointerId) return;
+    const p = pointAt(e);
+    goTo(p.x + d.dx, p.y + d.dy);
+  };
+  const up = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (drag.current?.id !== e.pointerId) return;
+    drag.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+  const key = (e: React.KeyboardEvent) => {
+    const step = ({ ArrowLeft: [1, 0], ArrowRight: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] } as Record<string, number[]>)[e.key];
+    if (step) { e.preventDefault(); setCam({ ...cam, x: cam.x + step[0] * size.w / 4, y: cam.y + step[1] * size.h / 4 }); }
+    else if (e.key === "+" || e.key === "=" || e.key === "-") { e.preventDefault(); zoomBy(e.key === "-" ? 0.8 : 1.25); }
+  };
+  const rect = (b: Box, className: string, key: string) => {
+    const r = map.toMap(b);
+    return <rect key={key} className={className} x={r.x} y={r.y} width={Math.max(0.5, r.w)} height={Math.max(0.5, r.h)} />;
+  };
+
+  return (
+    <div className="map-dock" onPointerDown={(e) => e.stopPropagation()}>
+      <div ref={ref} className="minimap" style={{ width: map.w, height: map.h }} tabIndex={0} role="group"
+        aria-label="Canvas map. Arrow keys pan, plus and minus zoom." title="Click to go there, drag the frame to pan, scroll to zoom"
+        onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+        onLostPointerCapture={() => { drag.current = null; }} onKeyDown={key}>
+        <svg width={map.w} height={map.h} viewBox={`0 0 ${map.w} ${map.h}`} aria-hidden="true">
+          {frames.map((f) => rect(f.box, "map-frame", f.project.root))}
+          {frames.flatMap((f) => f.areas.flatMap((a) => a.cards.map((c) => rect(c.box, "map-card", c.screen.id))))}
+          {agents.map((p, i) => { const m = map.toMap({ x: p.x, y: p.y, w: 0, h: 0 }); return <circle key={i} className="map-dot" cx={m.x} cy={m.y} r={2} />; })}
+          <rect className="map-view" x={seen.x} y={seen.y} width={seen.w} height={seen.h} />
+        </svg>
+      </div>
+      <div className="camera" role="toolbar" aria-label="Zoom">
+        <button type="button" className="tool" onClick={() => zoomBy(0.8)} aria-label="Zoom out"><Glyph d="M4 8h8" /></button>
+        <span className="pct">{Math.round(cam.k * 100)}%</span>
+        <button type="button" className="tool" onClick={() => zoomBy(1.25)} aria-label="Zoom in"><Glyph d="M4 8h8M8 4v8" /></button>
+        <span className="grow" />
+        <button type="button" className="tool-text" onClick={fit}>Fit</button>
+      </div>
     </div>
   );
 }

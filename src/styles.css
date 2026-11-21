@@ -116,7 +116,7 @@ button { font: inherit; color: inherit; }
 .ghost.accent:hover { background: var(--accent-wash); }
 
 /* ---- the canvas */
-.viewport { position: relative; overflow: hidden; background: var(--bg); cursor: grab; touch-action: none; }
+.viewport { position: relative; overflow: hidden; overflow: clip; background: var(--bg); cursor: grab; touch-action: none; }
 .viewport.panning { cursor: grabbing; }
 .viewport::before {
   content: ""; position: absolute; inset: 0; pointer-events: none;
@@ -163,9 +163,6 @@ button { font: inherit; color: inherit; }
 .card .pin.done { background: var(--faint); }
 .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 24px; }
 .empty b { color: var(--ink); font-weight: 500; display: block; margin-bottom: 4px; }
-.zoom { position: absolute; right: 14px; bottom: 14px; display: flex; gap: 6px; align-items: center; color: var(--dim); z-index: 2; }
-.zoom .ghost { background: var(--bg); }
-.zoom .mono { background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 3px 8px; }
 
 /* ---- the stage: one screen, its before, and its notes */
 .stage {
@@ -341,16 +338,30 @@ button { font: inherit; color: inherit; }
 .pick .meta { color: var(--dim); font-size: 11.5px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick li.out { opacity: .4; }
 
-.minimap {
-  position: absolute; left: 14px; bottom: 14px; z-index: 3; padding: 6px; border-radius: 9px; cursor: pointer;
-  background: color-mix(in srgb, var(--bg) 88%, transparent); border: 1px solid var(--line); backdrop-filter: blur(6px);
-  box-shadow: 0 6px 18px -12px color-mix(in srgb, black 60%, transparent); touch-action: none;
+/* the minimap and zoom, one unit over the canvas at the bottom left: the map, a 1px seam, the zoom row (as on Scout's canvas) */
+.map-dock {
+  position: absolute; left: 12px; bottom: 12px; z-index: 3; display: grid; min-width: 156px;
+  border: 1px solid var(--line-strong); border-radius: 7px; overflow: hidden;
+  background: color-mix(in oklab, var(--surface) 94%, transparent);
+  box-shadow: 0 6px 18px -12px color-mix(in srgb, black 60%, transparent);
 }
-.minimap svg { display: block; }
-.minimap .m-frame { fill: color-mix(in srgb, var(--ink) 5%, transparent); stroke: var(--line); stroke-width: 1; }
-.minimap .m-area { fill: color-mix(in srgb, var(--ink) 9%, transparent); }
-.minimap .m-agent { fill: var(--accent); }
-.minimap .m-view { fill: color-mix(in srgb, var(--ink) 6%, transparent); stroke: var(--ink); stroke-opacity: .55; stroke-width: 1; }
+.minimap { justify-self: center; cursor: pointer; touch-action: none; outline: none; }
+.minimap:focus-visible { outline: 1px solid var(--line-strong); outline-offset: -2px; }
+.minimap > svg { display: block; pointer-events: none; }
+.map-frame { fill: none; stroke: var(--line-strong); stroke-width: .75; }
+.map-card { fill: color-mix(in oklab, var(--ink) 24%, transparent); }
+.map-dot { fill: var(--accent); }
+.map-view { fill: color-mix(in oklab, var(--ink) 6%, transparent); stroke: color-mix(in oklab, var(--ink) 60%, transparent); stroke-width: 1; }
+.camera { display: flex; align-items: center; gap: 2px; padding: 2px; border-top: 1px solid var(--line); background: var(--surface); }
+.camera:first-child { border-top: 0; }
+.tool, .tool-text {
+  display: inline-grid; place-items: center; height: 26px; border: 0; border-radius: 5px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.tool { width: 26px; }
+.tool-text { padding: 0 8px; font-size: 12px; }
+.tool:hover, .tool-text:hover { color: var(--ink); background: var(--raised); }
+.camera .pct { min-width: 38px; font: 11px var(--mono); font-variant-numeric: tabular-nums; text-align: center; color: var(--dim); }
 @media (max-width: 640px) { .minimap { display: none; } }
 
 /* ---- an agent at work: Scout's cursor (J17), drifting over the screen it took last */
@@ -360,7 +371,7 @@ button { font: inherit; color: inherit; }
 }
 .agent-cursor .drift { position: relative; animation: drift 5.6s ease-in-out infinite; }
 @keyframes drift { 0%, 100% { translate: 0 0; } 33% { translate: 2px 1px; } 66% { translate: -1px 2px; } }
-.agent-cursor svg {
+.agent-cursor .drift > svg {
   position: absolute; left: -6px; top: -3px; overflow: visible;
   filter: drop-shadow(1.2px 1.2px 0 rgba(0,0,0,.18)) drop-shadow(0 3px 6px rgba(0,0,0,.35));
 }
@@ -371,7 +382,7 @@ button { font: inherit; color: inherit; }
 .agent-cursor .light { fill: none; stroke: color-mix(in oklab, var(--ink) 38%, transparent); stroke-width: .5; stroke-linejoin: round; }
 .agent-cursor .tag {
   position: absolute; left: 14px; top: 25px; display: inline-flex; align-items: center; gap: 6px; height: 22px;
-  padding: 0 8px 0 6px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--raised);
+  padding: 0 8px 0 4px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--raised);
   white-space: nowrap; font-size: 11px; color: var(--muted); box-shadow: 0 6px 14px -6px rgba(0,0,0,.6);
 }
 .agent-cursor.flip .tag { left: auto; right: 4px; }
@@ -380,4 +391,9 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .agent-cursor { transition: none; }
   .agent-cursor .drift, .agent-cursor .sway > path { animation: none; }
+}
+
+.harness-coin {
+  display: inline-grid; place-items: center; flex: none; border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent); background: var(--bg); color: var(--ink);
 }

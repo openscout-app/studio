@@ -2,6 +2,7 @@
 // projects and agents to show. Also the Scout glyph, drawn in the current text color.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CanvasData } from "./api";
+import { HarnessCoin } from "./Harness";
 
 export function Glyph({ className }: { className?: string }) {
   return (
@@ -101,6 +102,7 @@ export function ViewControls({ data, hours, setHours, filter, setFilter, view, s
               <li key={s.id} className={out ? "out" : ""}>
                 <label>
                   <input type="checkbox" checked={!hs.has(s.id)} onChange={() => setView({ ...view, hiddenSessions: flip(view.hiddenSessions, s.id) })} />
+                  <HarnessCoin size={16} />
                   <span className={`dot${s.working ? " accent" : s.open ? " ok" : ""}`} />
                   <span className="name">{s.title}</span>
                   <span className="meta">{project}</span>
