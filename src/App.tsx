@@ -4,14 +4,30 @@ import { Canvas } from "./Canvas";
 import { Arrival, Progress } from "./Loading";
 import { Stage } from "./Stage";
 import { layout, type Area } from "./scene";
+import { readPlace } from "./place";
 
 const WINDOWS = [{ h: 24, label: "Today" }, { h: 72, label: "3 days" }, { h: 168, label: "Week" }];
 type Filter = "all" | "notes" | "changed";
-type Open = { session: string; hash: string; at?: { x: number; y: number } };
+/** What's open: a session, maybe one of its screens, and a point an agent or a right-click gave. */
+type Open = {
+  session: string; hash?: string; at?: { x: number; y: number };
+  /** a point an agent linked to, and what it says about it */
+  point?: { x: number; y: number; say?: string };
+};
 
+/**
+ * Links: #s/<session> lands on a session; #s/<session>/<hash|latest> opens a screen; add
+ * ?at=x,y (fractions) to point at a spot and &say=… to say something about it.
+ */
 function readHash(): Open | null {
-  const m = location.hash.match(/^#s\/([^/]+)\/([0-9a-f]{16})$/);
-  return m ? { session: m[1], hash: m[2] } : null;
+  const m = location.hash.match(/^#s\/([\w-]+)(?:\/([0-9a-f]{16}|latest))?\/?(?:\?(.*))?$/);
+  if (!m) return null;
+  const q = new URLSearchParams(m[3] || "");
+  const [x, y] = (q.get("at") || "").split(",").map(Number);
+  const say = q.get("say")?.trim().slice(0, 2000) || undefined;
+  const point = Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= 1 && y >= 0 && y <= 1 && q.get("at")
+    ? { x, y, say } : undefined;
+  return { session: m[1], hash: m[2], point };
 }
 
 export function App() {
@@ -23,6 +39,8 @@ export function App() {
   const [filter, setFilter] = useState<Filter>("all");
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<Open | null>(readHash);
+  // the session a link was opened for; it stays after its screen is closed, so the canvas stays put
+  const [linked, setLinked] = useState<string | undefined>(() => readHash()?.session);
 
   const loadNotes = useCallback(() => api.notes().then(setNotes, () => {}), []);
   // ask often while sessions are still being read, then settle to every 15 seconds
@@ -39,13 +57,13 @@ export function App() {
   }, [hours]);
   useEffect(() => { loadNotes(); const t = setInterval(loadNotes, 4e3); return () => clearInterval(t); }, [loadNotes]);
   useEffect(() => {
-    const on = () => setOpen(readHash());
+    const on = () => { const o = readHash(); setOpen(o); if (o) setLinked(o.session); };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
   const show = (o: Open | null) => {
     setOpen(o);
-    history.replaceState(null, "", o ? `#s/${o.session}/${o.hash}` : location.pathname);
+    history.replaceState(null, "", o?.hash ? `#s/${o.session}/${o.hash}` : location.pathname);
   };
 
   const noted = useMemo(() => new Set(notes.map((n) => `${n.session}:${n.screen.hash}`)), [notes]);
@@ -70,12 +88,25 @@ export function App() {
     };
     return layout(shaped, opened);
   }, [data, opened, keep]);
-  // land on the latest session the first time there is one; a new window lands again
-  // (from the top of its repository's frame, so the repository's name shows above it)
+  // land back where you were if that session is in this window, else on the latest session. Sessions
+  // are read newest first, so yours usually shows within a moment; past a short wait, take the latest.
+  const place = useMemo(readPlace, [hours]);
+  const [gaveUp, setGaveUp] = useState(false);
+  useEffect(() => { setGaveUp(false); const t = setTimeout(() => setGaveUp(true), 2500); return () => clearTimeout(t); }, [hours]);
+  const areas = scene?.frames.flatMap((f) => f.areas) || [];
+  const back = place ? areas.find((a) => a.session.id === place.session) : undefined;
+  const asked = linked ? areas.find((a) => a.session.id === linked) : undefined;
+  const settled = linked ? !!asked || !!data?.loading.done && hours >= 168 || gaveUp : !!back || !place || gaveUp || !!data?.loading.done;
+  const ready = !!scene && scene.frames.length > 0 && settled;
+  const landKey = asked ? `link:${asked.session.id}` : back ? `back:${back.session.id}` : `latest:${scene?.frames[0]?.areas[0]?.session.id}`;
   const focus = useMemo(() => {
+    if (asked) return { box: asked.box };
+    if (back && place) return { box: back.box, at: place };
     const f = scene?.frames[0], a = f?.areas[0];
-    return f && a ? { x: a.box.x, y: f.box.y, w: a.box.w, h: a.box.y + a.box.h - f.box.y } : null;
-  }, [scene?.frames[0]?.project.root, scene?.frames[0]?.areas[0]?.session.id]);
+    // (from the top of its repository's frame, so the repository's name shows above it)
+    return f && a ? { box: { x: a.box.x, y: f.box.y, w: a.box.w, h: a.box.y + a.box.h - f.box.y } } : null;
+  }, [landKey, ready]);
+  const landedOn = (asked || back)?.session.title || scene?.frames[0]?.areas[0]?.session.title;
 
   const counts = useMemo(() => {
     const ss = data?.projects.flatMap((p) => p.sessions) || [];
@@ -84,15 +115,20 @@ export function App() {
   }, [data]);
 
   const target = useMemo(() => {
-    if (!open || !data) return null;
+    if (!open?.hash || !data) return null;
     for (const p of data.projects) for (const s of p.sessions) {
       if (s.id !== open.session) continue;
       const screens = s.screens.slice().reverse();
-      const i = screens.findIndex((x) => x.hash === open.hash);
-      if (i >= 0) return { project: p, session: s, screens, index: i };
+      const i = open.hash === "latest" ? 0 : screens.findIndex((x) => x.hash === open.hash);
+      if (i >= 0 && screens[i]) return { project: p, session: s, screens, index: i };
     }
     return null;
   }, [open, data]);
+  // a link to a session older than this window: widen the window once everything here is read
+  const found = !!linked && !!data?.projects.some((p) => p.sessions.some((s) => s.id === linked));
+  useEffect(() => {
+    if (linked && data?.loading.done && data.hours === hours && !found && hours < 168) setHours(168);
+  }, [linked, found, data?.loading.done, hours]);
 
   const onOpen = useCallback((a: Area, s: Screen, at?: { x: number; y: number }) => show({ session: a.session.id, hash: s.hash, at }), []);
 
@@ -126,9 +162,10 @@ export function App() {
           {data ? (data.scout.up ? "Scout is up" : "Scout isn't running") : "Looking for Scout…"}
         </span>
       </header>
-      <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all"} ready={!!scene && scene.frames.length > 0}>
-        {scene && scene.frames.length > 0 && (
-          <Canvas key={hours} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened}
+      <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all"} ready={ready}
+        returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}>
+        {scene && ready && (
+          <Canvas key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened}
             onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
         )}
         {data && <Progress loading={data.loading} counts={counts} />}
@@ -136,7 +173,7 @@ export function App() {
       {target && open && (
         <Stage
           key={target.session.id} session={target.session} project={target.project} screens={target.screens} index={target.index}
-          notes={notes} at={open.at} scoutUp={!!data?.scout.up}
+          notes={notes} at={open.at} point={open.point} scoutUp={!!data?.scout.up}
           onIndex={(i) => show({ session: target.session.id, hash: target.screens[i].hash })}
           onClose={() => show(null)} onNotes={loadNotes}
         />

@@ -8,13 +8,15 @@ import { Working, kindOf } from "./Canvas";
 type Props = {
   session: Session; project: Project; screens: Screen[]; index: number; notes: Note[];
   at?: { x: number; y: number }; scoutUp: boolean;
+  /** a point the session linked to, with what it says about it */
+  point?: { x: number; y: number; say?: string };
   onIndex: (i: number) => void; onClose: () => void; onNotes: () => void;
 };
 
 /** Text fields and notes keep the browser's own menu; everywhere else a right-click places a note. */
 const ownMenu = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.("textarea, input, [data-note]");
 
-export function Stage({ session, project, screens, index, notes, at, scoutUp, onIndex, onClose, onNotes }: Props) {
+export function Stage({ session, project, screens, index, notes, at, point, scoutUp, onIndex, onClose, onNotes }: Props) {
   const sc = screens[index];
   const shot = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -22,8 +24,10 @@ export function Stage({ session, project, screens, index, notes, at, scoutUp, on
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [wipe, setWipe] = useState(0.5);
-  const [compare, setCompare] = useState(true);
+  // a linked point is on the screen as it is now, so it opens without the before laid over it
+  const [compare, setCompare] = useState(!point);
   const [current, setCurrent] = useState<string | null>(null);
+  const [heard, setHeard] = useState(false); // the person put the session's remark away
   const mine = notes.filter((n) => n.session === session.id && n.screen.hash === sc.hash);
 
   useEffect(() => { setDraft(at ?? null); setText(""); setWipe(0.5); setCurrent(null); }, [sc.id]);
@@ -116,12 +120,36 @@ export function Stage({ session, project, screens, index, notes, at, scoutUp, on
               onClick={(e) => { e.stopPropagation(); setCurrent(n.id); setDraft(null); }} title={n.text}
             >{i + 1}</button>
           ))}
+          {point && (
+            <span className="pointer" data-note style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%` }}
+              onClick={(e) => { e.stopPropagation(); setHeard(false); setDraft(null); }} title={point.say || "The session points here"} />
+          )}
+          {point && !heard && !draft && (
+            <div
+              className="said" data-note onClick={(e) => e.stopPropagation()}
+              style={{
+                // beside the point, and above it when it's low on the screen, so the spot itself stays clear
+                ...(point.y > 0.6 ? { bottom: `calc(${(1 - point.y) * 100}% + 22px)` } : { top: `calc(${point.y * 100}% - 14px)` }),
+                ...(point.x > 0.6 ? { right: `calc(${(1 - point.x) * 100}% + 22px)` } : { left: `calc(${point.x * 100}% + 22px)` }),
+              }}
+            >
+              <div className="who">{session.title.slice(0, 60)} <span>points here</span></div>
+              {point.say && <p>{point.say}</p>}
+              <div className="row">
+                <button className="ghost" onClick={() => setHeard(true)}>Got it</button>
+                <button className="primary" onClick={() => setDraft({ x: point.x, y: point.y })}>Reply here</button>
+              </div>
+            </div>
+          )}
           {draft && (
             <>
               <span className="pin-big" style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%`, opacity: 0.7 }} />
               <div
                 className="composer" data-note onClick={(e) => e.stopPropagation()}
-                style={{ top: `calc(${draft.y * 100}% - 12px)`, ...(left ? { right: `calc(${(1 - draft.x) * 100}% + 18px)` } : { left: `calc(${draft.x * 100}% + 18px)` }) }}
+                style={{
+                  ...(draft.y > 0.6 ? { bottom: `calc(${(1 - draft.y) * 100}% - 12px)` } : { top: `calc(${draft.y * 100}% - 12px)` }),
+                  ...(left ? { right: `calc(${(1 - draft.x) * 100}% + 18px)` } : { left: `calc(${draft.x * 100}% + 18px)` }),
+                }}
               >
                 <textarea
                   autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={`A note for ${session.title.slice(0, 40)}`}

@@ -7,8 +7,7 @@ const STEP_MS = 280; // the least each step shows, so the sequence reads as one
 
 type Step = { label: string; done: boolean; detail?: string; warn?: boolean };
 
-function steps(data: CanvasData | null, hours: number, ready: boolean): Step[] {
-  const latest = data?.projects[0]?.sessions[0];
+function steps(data: CanvasData | null, hours: number, ready: boolean, returning?: "back" | "link", landedOn?: string): Step[] {
   const window = hours === 24 ? "today" : hours === 168 ? "this week" : `in the last ${hours / 24} days`;
   return [
     {
@@ -20,16 +19,20 @@ function steps(data: CanvasData | null, hours: number, ready: boolean): Step[] {
       label: "Finding your Claude sessions", done: !!data,
       detail: data ? `${data.loading.sessions} ${data.loading.sessions === 1 ? "session" : "sessions"} ${window}` : undefined,
     },
-    { label: "Opening the latest one", done: ready, detail: latest?.title },
+    {
+      label: returning === "link" ? "Opening what you were sent" : returning === "back" ? "Opening where you left off" : "Opening the latest one",
+      done: ready, detail: ready ? landedOn : undefined,
+    },
   ];
 }
 
-export function Arrival({ data, error, hours, filtered, ready, children }: {
-  data: CanvasData | null; error: string | null; hours: number; filtered: boolean; ready: boolean; children: ReactNode;
+export function Arrival({ data, error, hours, filtered, ready, returning, landedOn, children }: {
+  data: CanvasData | null; error: string | null; hours: number; filtered: boolean; ready: boolean;
+  returning?: "back" | "link"; landedOn?: string; children: ReactNode;
 }) {
   // how many steps have checked off; each waits for the one before and for its own condition
   const [checked, setChecked] = useState(0);
-  const list = steps(data, hours, ready);
+  const list = steps(data, hours, ready, returning, landedOn);
   const arrived = checked >= list.length;
   // the sequence plays once, on the way in; switching the window later goes straight to the canvas
   const ripe = !arrived && list[checked].done;

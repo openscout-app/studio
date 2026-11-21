@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ago, thumb, type Note, type Screen } from "./api";
 import { CARD_W, MEDIA_H, type Area, type Box, type Frame } from "./scene";
+import { savePlace } from "./place";
 
 export type Cam = { x: number; y: number; k: number };
 const K_MIN = 0.1, K_MAX = 2;
@@ -27,8 +28,11 @@ export function Working() {
 
 type Props = {
   frames: Frame[]; bounds: Box; notes: Note[];
-  /** where to land when the canvas first shows: the latest session */
-  focus: Box | null;
+  /**
+   * Where to land when the canvas first shows: the latest session to glide in on, or, with `at`,
+   * the session you were on, put back exactly where it sat on screen.
+   */
+  focus: { box: Box; at?: { sx: number; sy: number; k: number } } | null;
   onOpen: (area: Area, s: Screen, at?: { x: number; y: number }) => void;
   onMore: (sessionId: string) => void; opened: Set<string>;
 };
@@ -72,16 +76,28 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened }:
     return { x: (size.w - bounds.w * k) / 2, y: 12, k };
   };
   const fit = () => moveTo(fitCam());
-  // land on the latest session: readable, its head near the top, gliding in from a little further out
+  // land: back where you were, or on the latest session, readable, gliding in from a little further out
   useEffect(() => {
     if (cam || size.w < 100 || bounds.w <= 0) return;
     if (!focus) return setCam(fitCam());
-    const k = clampK(Math.min(1, (size.w - 96) / focus.w));
-    const to = { k, x: (size.w - focus.w * k) / 2 - focus.x * k, y: 16 - focus.y * k };
-    const from = { k: k * 0.86, x: (size.w - focus.w * k * 0.86) / 2 - focus.x * k * 0.86, y: 40 - focus.y * k * 0.86 };
+    const b = focus.box;
+    if (focus.at) {
+      const k = clampK(focus.at.k);
+      return setCam({ k, x: focus.at.sx - b.x * k, y: focus.at.sy - b.y * k });
+    }
+    const k = clampK(Math.min(1, (size.w - 96) / b.w));
+    const to = { k, x: (size.w - b.w * k) / 2 - b.x * k, y: 16 - b.y * k };
+    const from = { k: k * 0.86, x: (size.w - b.w * k * 0.86) / 2 - b.x * k * 0.86, y: 40 - b.y * k * 0.86 };
     setCam(from);
     moveTo(to, from);
   }, [focus, size.w, bounds.w]);
+  // remember where you are, a moment after you stop moving
+  const areas = useMemo(() => frames.flatMap((f) => f.areas), [frames]);
+  useEffect(() => {
+    if (!cam) return;
+    const t = setTimeout(() => savePlace(cam, size, areas), 400);
+    return () => clearTimeout(t);
+  }, [cam, size, areas]);
   useEffect(() => () => cancelAnimationFrame(glide.current), []);
 
   // wheel: scroll pans, pinch (or ⌘/ctrl) zooms around the pointer

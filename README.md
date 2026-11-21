@@ -50,6 +50,29 @@ The message carries a marker (`[scout-canvas:n_…]`). The canvas finds the mark
 
 Notes are kept in `~/.scout-canvas/notes.json` (`SCOUT_CANVAS_HOME` moves the folder). The server listens on 127.0.0.1 only and refuses requests from other sites, so no web page can send notes into your sessions.
 
+## Point a person at a screen
+
+An agent can hand you a link to the exact thing it means: one of its screens, a point on it, and what it wants to say about that point. Run this from the agent's Claude Code session:
+
+```sh
+npx @openscout/canvas link --at 640,380 --say "This total still reads 0 after the import"
+```
+
+It prints a link like `http://localhost:4801/#s/<session>/<screen>?at=0.4,0.38&say=…`. When you open it, Scout Canvas shows that screen with a ring on the point and the remark beside it. **Reply here** opens a note at that point, and Scout takes the note back to the session.
+
+| Option | What it does |
+| --- | --- |
+| `--screen` | Which screen: `latest` (the default), an image file the session read, a page address such as `localhost:3000/settings`, or a screen hash. |
+| `--at` | A point on the screen, in pixels of the screen (`640,380`) or as fractions (`0.4,0.38`). |
+| `--say` | What to tell the person about that point. |
+| `--session` | Which session. The default is the session that runs the command (`CLAUDE_CODE_SESSION_ID`), or else the latest session in the current folder. |
+| `--open` | Also open the link. |
+| `--json` | Print the link with the screen it points at. |
+
+The link names your session, so it works only on your Mac. The remark is in the link's fragment, so it never reaches the server. A link with no screen (`#s/<session>`) opens the canvas on that session. If the session is older than the window you have chosen, the window widens to a week.
+
+Scout Canvas also remembers where you were. When you open it again, the session you were looking at sits where you left it.
+
 ## Publish
 
 ```sh
