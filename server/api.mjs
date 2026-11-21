@@ -8,6 +8,7 @@ import { IMG } from "./paths.mjs";
 import { materialize } from "./transcripts.mjs";
 import { canvas } from "./sessions.mjs";
 import { addNote, handOff, keep, notes, remove, retry, startSweep } from "./notes.mjs";
+import { addPointer, markSeen, pointer, pointersOf, screensOf } from "./pointers.mjs";
 
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
@@ -92,6 +93,22 @@ export async function handle(req, res) {
     if (m && req.method === "POST" && m[2] === "retry") return await retry(m[1]), send(res, 200, { ok: true }), true;
     if (m && req.method === "POST" && m[2] === "keep") return send(res, 200, { note: keep(m[1], (await body(req)).kept !== false) }), true;
     if (m && req.method === "DELETE" && !m[2]) return remove(m[1]), send(res, 200, { ok: true }), true;
+    // pointers: an agent shows a person a spot on its screen
+    const sid = url.searchParams.get("session") || "";
+    if (p === "/api/screens" && req.method === "GET") {
+      const list = await screensOf(sid, Math.min(50, Number(url.searchParams.get("limit")) || 12));
+      return send(res, list ? 200 : 404, list ? { screens: list } : { error: `no transcript for session ${sid}` }), true;
+    }
+    if (p === "/api/pointers" && req.method === "GET") return send(res, 200, { pointers: await pointersOf(sid) }), true;
+    if (p === "/api/pointers" && req.method === "POST") {
+      try {
+        const ptr = await addPointer(await body(req));
+        return send(res, 200, { pointer: ptr, url: `http://${req.headers.host}/p/${ptr.id}` }), true;
+      } catch (e) { return send(res, 400, { error: String(e.message || e) }), true; }
+    }
+    const pm = p.match(/^\/api\/pointers\/(p_[a-z0-9]+)(\/seen)?$/);
+    if (pm && req.method === "GET" && !pm[2]) { const ptr = await pointer(pm[1]); return send(res, ptr ? 200 : 404, ptr ? { pointer: ptr } : { error: "no such pointer" }), true; }
+    if (pm && req.method === "POST" && pm[2]) return send(res, 200, { pointer: markSeen(pm[1]) }), true;
     send(res, 404, { error: "not found" });
   } catch (e) {
     send(res, 500, { error: String(e?.message || e) });

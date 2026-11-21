@@ -280,13 +280,24 @@ button { font: inherit; color: inherit; }
   animation: ping 1.8s cubic-bezier(0, 0, .2, 1) infinite;
 }
 @keyframes ping { 0% { transform: scale(1); opacity: .8; } 80%, 100% { transform: scale(2.4); opacity: 0; } }
-.said {
+.pointer-say {
   position: absolute; z-index: 4; width: min(320px, 70%); padding: 12px 14px; border-radius: 10px; cursor: auto;
   background: var(--surface); border: 1px solid var(--accent-line); color: var(--ink);
   box-shadow: 0 12px 32px -16px color-mix(in srgb, black 55%, transparent); animation: land 240ms ease both;
 }
-.said .who { font-size: 12px; color: var(--muted); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.said .who span { color: var(--dim); font-weight: 400; }
-.said p { margin: 6px 0 0; font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-.said .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
-@media (prefers-reduced-motion: reduce) { .pointer::after, .said { animation: none; } }
+.pointer-say .who { font-size: 12px; color: var(--muted); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pointer-say .who span { color: var(--dim); font-weight: 400; }
+.pointer-say p { margin: 6px 0 0; font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pointer-say .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+@media (prefers-reduced-motion: reduce) { .pointer::after, .pointer-say { animation: none; } }
+.pointer-area {
+  position: absolute; z-index: 3; cursor: pointer; border-radius: 6px;
+  border: 2px solid var(--accent); background: color-mix(in oklab, var(--accent) 10%, transparent);
+  animation: land 300ms ease both;
+}
+.pointer-say .replied { margin-top: 8px; font-size: 12.5px; color: var(--muted); border-left: 2px solid var(--line-strong); padding-left: 8px; }
+.toast {
+  position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 40; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 14px;
+  color: var(--ink); font-size: 13px; max-width: min(520px, calc(100vw - 32px));
+}

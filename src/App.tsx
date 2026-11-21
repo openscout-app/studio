@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type CanvasData, type Note, type Screen } from "./api";
+import { api, type CanvasData, type Note, type Pointer, type Screen } from "./api";
 import { Canvas } from "./Canvas";
 import { Arrival, Progress } from "./Loading";
 import { Stage } from "./Stage";
@@ -8,27 +8,16 @@ import { readPlace } from "./place";
 
 const WINDOWS = [{ h: 24, label: "Today" }, { h: 72, label: "3 days" }, { h: 168, label: "Week" }];
 type Filter = "all" | "notes" | "changed";
-/** What's open: a session, maybe one of its screens, and a point an agent or a right-click gave. */
-type Open = {
-  session: string; hash?: string; at?: { x: number; y: number };
-  /** a point an agent linked to, and what it says about it */
-  point?: { x: number; y: number; say?: string };
-};
+/** What's open: a session, maybe one of its screens, and a point a right-click or a pointer gave. */
+type Open = { session: string; hash?: string; at?: { x: number; y: number }; pointer?: Pointer };
 
-/**
- * Links: #s/<session> lands on a session; #s/<session>/<hash|latest> opens a screen; add
- * ?at=x,y (fractions) to point at a spot and &say=… to say something about it.
- */
+/** #s/<session> lands on a session; #s/<session>/<hash|latest> opens one of its screens. */
 function readHash(): Open | null {
-  const m = location.hash.match(/^#s\/([\w-]+)(?:\/([0-9a-f]{16}|latest))?\/?(?:\?(.*))?$/);
-  if (!m) return null;
-  const q = new URLSearchParams(m[3] || "");
-  const [x, y] = (q.get("at") || "").split(",").map(Number);
-  const say = q.get("say")?.trim().slice(0, 2000) || undefined;
-  const point = Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= 1 && y >= 0 && y <= 1 && q.get("at")
-    ? { x, y, say } : undefined;
-  return { session: m[1], hash: m[2], point };
+  const m = location.hash.match(/^#s\/([\w-]+)(?:\/([0-9a-f]{16}|latest))?\/?$/);
+  return m ? { session: m[1], hash: m[2] } : null;
 }
+/** /p/<id>: a pointer an agent made, to be fetched */
+const pointerId = () => location.pathname.match(/^\/p\/(p_[a-z0-9]+)\/?$/)?.[1];
 
 export function App() {
   const [hours, setHours] = useState(() => Number(localStorage.getItem("scout-canvas:hours")) || 72);
@@ -41,6 +30,17 @@ export function App() {
   const [open, setOpen] = useState<Open | null>(readHash);
   // the session a link was opened for; it stays after its screen is closed, so the canvas stays put
   const [linked, setLinked] = useState<string | undefined>(() => readHash()?.session);
+  const [missing, setMissing] = useState<string | null>(null);
+  // a pointer link: fetch it, mark it seen, and open its screen at its spot
+  useEffect(() => {
+    const id = pointerId();
+    if (!id) return;
+    api.pointer(id).then(({ pointer: p }) => {
+      setOpen({ session: p.session, hash: p.screen.hash, pointer: p });
+      setLinked(p.session);
+      api.seen(id).catch(() => {});
+    }, () => setMissing("That link points at something Scout Canvas doesn't have. It may come from another Mac."));
+  }, []);
 
   const loadNotes = useCallback(() => api.notes().then(setNotes, () => {}), []);
   // ask often while sessions are still being read, then settle to every 15 seconds
@@ -63,7 +63,8 @@ export function App() {
   }, []);
   const show = (o: Open | null) => {
     setOpen(o);
-    history.replaceState(null, "", o?.hash ? `#s/${o.session}/${o.hash}` : location.pathname);
+    // a pointer keeps its own address while its screen is open; anything else is a plain screen link
+    history.replaceState(null, "", o?.pointer ? `/p/${o.pointer.id}` : o?.hash ? `/#s/${o.session}/${o.hash}` : "/");
   };
 
   const noted = useMemo(() => new Set(notes.map((n) => `${n.session}:${n.screen.hash}`)), [notes]);
@@ -119,7 +120,15 @@ export function App() {
     for (const p of data.projects) for (const s of p.sessions) {
       if (s.id !== open.session) continue;
       const screens = s.screens.slice().reverse();
-      const i = open.hash === "latest" ? 0 : screens.findIndex((x) => x.hash === open.hash);
+      let i = open.hash === "latest" ? 0 : screens.findIndex((x) => x.hash === open.hash);
+      // a pointer's screen is kept as it was, even if the session's screens have moved on since
+      const ps = open.pointer?.screen;
+      if (i < 0 && ps) {
+        const sc: Screen = { id: `${s.id}:${ps.hash}`, ...ps, before: null, open: false };
+        const j = screens.findIndex((x) => x.at < sc.at);
+        i = j < 0 ? screens.length : j;
+        screens.splice(i, 0, sc);
+      }
       if (i >= 0 && screens[i]) return { project: p, session: s, screens, index: i };
     }
     return null;
@@ -170,10 +179,11 @@ export function App() {
         )}
         {data && <Progress loading={data.loading} counts={counts} />}
       </Arrival>
+      {missing && <div className="toast" role="alert" onClick={() => { setMissing(null); history.replaceState(null, "", "/"); }}>{missing}</div>}
       {target && open && (
         <Stage
           key={target.session.id} session={target.session} project={target.project} screens={target.screens} index={target.index}
-          notes={notes} at={open.at} point={open.point} scoutUp={!!data?.scout.up}
+          notes={notes} at={open.at} pointer={open.pointer} scoutUp={!!data?.scout.up}
           onIndex={(i) => show({ session: target.session.id, hash: target.screens[i].hash })}
           onClose={() => show(null)} onNotes={loadNotes}
         />

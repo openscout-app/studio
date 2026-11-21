@@ -1,6 +1,5 @@
-// Links an agent can hand to a person: a session, one of its screens, a point on it, and what the
-// agent wants to say about that point. The remark travels in the link's fragment, so it never
-// reaches the server and stays in the person's browser.
+// Which session and which of its screens an agent means: the session from CLAUDE_CODE_SESSION_ID
+// (or the latest in a folder), its screens as the canvas shows them, and one picked from those.
 import fs from "node:fs";
 import path from "node:path";
 import { CLAUDE_PROJECTS } from "./paths.mjs";
@@ -58,29 +57,4 @@ export function pickScreen(screens, which = "latest") {
   }
   const abs = path.resolve(which);
   return screens.find((x) => x.file === abs) || screens.find((x) => x.file && path.basename(x.file) === path.basename(which)) || null;
-}
-
-/** A point as fractions of the screen: "0.4,0.3" as given, "640,380" as pixels of the screen. */
-export function pointOf(at, screen) {
-  if (!at) return null;
-  const m = String(at).match(/^\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*$/);
-  if (!m) throw new Error(`--at takes x,y (fractions like 0.4,0.3 or pixels like 640,380), not "${at}"`);
-  let x = Number(m[1]), y = Number(m[2]);
-  if (x > 1 || y > 1) {
-    if (!screen) throw new Error("--at in pixels needs a screen");
-    x /= screen.w; y /= screen.h;
-  }
-  if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) throw new Error(`--at ${at} falls outside the screen`);
-  return { x: Math.round(x * 1e4) / 1e4, y: Math.round(y * 1e4) / 1e4 };
-}
-
-/** The link itself. */
-export function linkTo(base, { session, screen, point, say }) {
-  let h = `#s/${session}`;
-  if (screen) h += `/${screen.hash}`;
-  const q = new URLSearchParams();
-  if (screen && point) q.set("at", `${point.x},${point.y}`);
-  if (say) q.set("say", say);
-  const qs = q.toString().replace(/%2C/g, ",");
-  return `${base}/${h}${qs ? `?${qs}` : ""}`;
 }

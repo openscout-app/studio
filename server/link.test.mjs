@@ -1,7 +1,8 @@
-// Links an agent hands a person: which screen, which point, and what it says.
+// Which screen an agent means, and where on it.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pickScreen, pointOf, linkTo } from "./link.mjs";
+import { pickScreen } from "./link.mjs";
+import { boxOf } from "./pointers.mjs";
 
 const screens = [
   { hash: "aaaa111122223333", w: 1600, h: 1000, at: 3, url: "http://localhost:3000/board?x=1", file: null },
@@ -9,28 +10,24 @@ const screens = [
   { hash: "cccc111122223333", w: 800, h: 600, at: 1, url: "http://localhost:3000/settings", file: null },
 ];
 
-test("a screen is picked by latest, hash, page or file", () => {
+test("a screen is picked by latest, id, page or file", () => {
   assert.equal(pickScreen(screens).hash, "aaaa111122223333");
+  assert.equal(pickScreen(screens, "cccc111122223333").hash, "cccc111122223333");
   assert.equal(pickScreen(screens, "cccc").hash, "cccc111122223333");
   assert.equal(pickScreen(screens, "localhost:3000/settings").hash, "cccc111122223333");
-  assert.equal(pickScreen(screens, "http://localhost:3000/board").hash, "aaaa111122223333");
   assert.equal(pickScreen(screens, "/tmp/shots/after.png").hash, "bbbb111122223333");
   assert.equal(pickScreen(screens, "nothing.png"), null);
   assert.equal(pickScreen([], "latest"), null);
 });
 
-test("a point is fractions as given, or pixels of the screen", () => {
-  assert.deepEqual(pointOf("0.5,0.25", screens[0]), { x: 0.5, y: 0.25 });
-  assert.deepEqual(pointOf("800, 250", screens[0]), { x: 0.5, y: 0.25 });
-  assert.throws(() => pointOf("2000,10", screens[0]), /outside/);
-  assert.throws(() => pointOf("left", screens[0]), /x,y/);
-  assert.equal(pointOf(undefined, screens[0]), null);
-});
-
-test("the link carries the session, the screen, the point and the remark", () => {
-  const url = linkTo("http://localhost:4801", { session: "s-1", screen: screens[0], point: { x: 0.5, y: 0.25 }, say: "This total is off & so is 50%" });
-  assert.equal(url, "http://localhost:4801/#s/s-1/aaaa111122223333?at=0.5,0.25&say=This+total+is+off+%26+so+is+50%25");
-  const q = new URLSearchParams(url.split("?")[1]);
-  assert.equal(q.get("say"), "This total is off & so is 50%");
-  assert.equal(linkTo("http://localhost:4801", { session: "s-1" }), "http://localhost:4801/#s/s-1");
+test("a spot is pixels of the screen unless it says fractions", () => {
+  const s = screens[0];
+  assert.deepEqual(boxOf({ x: 800, y: 250 }, s), { x: 0.5, y: 0.25, w: 0, h: 0 });
+  assert.deepEqual(boxOf({ x: 1, y: 1 }, s), { x: 0.0006, y: 0.001, w: 0, h: 0 }, "1,1 is a pixel, not the corner");
+  assert.deepEqual(boxOf({ x: 0.5, y: 0.25, w: 0.1, h: 0.2, unit: "fraction" }, s), { x: 0.5, y: 0.25, w: 0.1, h: 0.2 });
+  assert.deepEqual(boxOf({ x: 400, y: 100, w: 800, h: 500 }, s), { x: 0.25, y: 0.1, w: 0.5, h: 0.5 });
+  assert.throws(() => boxOf({ x: 2000, y: 10 }, s), /outside the screen, which is 1600×1000/);
+  assert.throws(() => boxOf({ x: 1500, y: 10, w: 300, h: 10 }, s), /outside/);
+  assert.throws(() => boxOf({ x: "left", y: 1 }, s), /numbers/);
+  assert.throws(() => boxOf({ x: 1, y: 1, unit: "em" }, s), /unit/);
 });

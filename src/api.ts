@@ -21,6 +21,14 @@ export type Note = {
   arrivedAt: number | null; answers: { at: number; text: string }[];
 };
 
+/** A spot or area a session pointed the person at, with its screen kept as it was. */
+export type Pointer = {
+  id: string; session: string; cwd: string; say: string; at: number; seenAt: number | null;
+  screen: { hash: string; ext: string; w: number; h: number; at: number; url: string | null; file: string | null; tool: string; caption: string };
+  box: { x: number; y: number; w: number; h: number };
+  replies: { at: number; text: string; note: string }[];
+};
+
 export const img = (s: { hash: string; ext: string }) => `/img/${s.hash}.${s.ext}`;
 export const thumb = (s: { hash: string; ext: string }) => `/img/t/${s.hash}.${s.ext}`;
 
@@ -32,7 +40,9 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 export const api = {
   canvas: (hours: number) => call<CanvasData>("GET", `/api/canvas?hours=${hours}`),
   notes: () => call<{ notes: Note[] }>("GET", "/api/notes").then((r) => r.notes),
-  add: (n: { session: string; project: string; cwd: string; screen: Screen; x: number; y: number; text: string }) => call<{ note: Note }>("POST", "/api/notes", n),
+  add: (n: { session: string; project: string; cwd: string; screen: Screen; x: number; y: number; text: string; re?: string; reSay?: string }) => call<{ note: Note }>("POST", "/api/notes", n),
+  pointer: (id: string) => call<{ pointer: Pointer }>("GET", `/api/pointers/${id}`),
+  seen: (id: string) => call("POST", `/api/pointers/${id}/seen`),
   handOff: (id: string) => call("POST", `/api/notes/${id}/handoff`),
   retry: (id: string) => call("POST", `/api/notes/${id}/retry`),
   keep: (id: string, kept: boolean) => call("POST", `/api/notes/${id}/keep`, { kept }),

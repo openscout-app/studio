@@ -2,21 +2,21 @@
 // anywhere on the screen to pin a note there; Scout takes it to the session that took the screen,
 // and the thread beside it shows how that went and what the session said back.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ago, api, img, type Note, type Screen, type Session, type Project } from "./api";
+import { ago, api, img, type Note, type Pointer, type Screen, type Session, type Project } from "./api";
 import { Working, kindOf } from "./Canvas";
 
 type Props = {
   session: Session; project: Project; screens: Screen[]; index: number; notes: Note[];
   at?: { x: number; y: number }; scoutUp: boolean;
-  /** a point the session linked to, with what it says about it */
-  point?: { x: number; y: number; say?: string };
+  /** a spot or area the session pointed the person at, with what it says about it */
+  pointer?: Pointer;
   onIndex: (i: number) => void; onClose: () => void; onNotes: () => void;
 };
 
 /** Text fields and notes keep the browser's own menu; everywhere else a right-click places a note. */
 const ownMenu = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.("textarea, input, [data-note]");
 
-export function Stage({ session, project, screens, index, notes, at, point, scoutUp, onIndex, onClose, onNotes }: Props) {
+export function Stage({ session, project, screens, index, notes, at, pointer, scoutUp, onIndex, onClose, onNotes }: Props) {
   const sc = screens[index];
   const shot = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -25,8 +25,13 @@ export function Stage({ session, project, screens, index, notes, at, point, scou
   const [busy, setBusy] = useState(false);
   const [wipe, setWipe] = useState(0.5);
   // a linked point is on the screen as it is now, so it opens without the before laid over it
-  const [compare, setCompare] = useState(!point);
+  const [compare, setCompare] = useState(!pointer);
   const [current, setCurrent] = useState<string | null>(null);
+  // the pointer belongs to its own screen; stepping to another leaves it behind
+  const point = pointer && pointer.screen.hash === sc.hash
+    ? { ...pointer.box, cx: pointer.box.x + pointer.box.w / 2, cy: pointer.box.y + pointer.box.h / 2, area: pointer.box.w > 0 && pointer.box.h > 0 }
+    : null;
+  const [replyTo, setReplyTo] = useState<Pointer | null>(null);
   const [heard, setHeard] = useState(false); // the person put the session's remark away
   const mine = notes.filter((n) => n.session === session.id && n.screen.hash === sc.hash);
 
@@ -76,8 +81,9 @@ export function Stage({ session, project, screens, index, notes, at, point, scou
     if (!draft || !text.trim()) return;
     setBusy(true);
     try {
-      const { note } = await api.add({ session: session.id, project: project.name, cwd: session.cwd, screen: sc, x: draft.x, y: draft.y, text });
-      setDraft(null); setText(""); setCurrent(note.id); onNotes();
+      const re = replyTo && replyTo.screen.hash === sc.hash ? { re: replyTo.id, reSay: replyTo.say } : {};
+      const { note } = await api.add({ session: session.id, project: project.name, cwd: session.cwd, screen: sc, x: draft.x, y: draft.y, text, ...re });
+      setDraft(null); setText(""); setCurrent(note.id); setReplyTo(null); onNotes();
     } finally { setBusy(false); }
   };
 
@@ -120,24 +126,32 @@ export function Stage({ session, project, screens, index, notes, at, point, scou
               onClick={(e) => { e.stopPropagation(); setCurrent(n.id); setDraft(null); }} title={n.text}
             >{i + 1}</button>
           ))}
-          {point && (
-            <span className="pointer" data-note style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%` }}
-              onClick={(e) => { e.stopPropagation(); setHeard(false); setDraft(null); }} title={point.say || "The session points here"} />
-          )}
+          {point && (point.area ? (
+            <span className="pointer-area" data-note style={{ left: `${point.x * 100}%`, top: `${point.y * 100}%`, width: `${point.w * 100}%`, height: `${point.h * 100}%` }}
+              onClick={(e) => { e.stopPropagation(); setHeard(false); setDraft(null); }} title={pointer!.say} />
+          ) : (
+            <span className="pointer" data-note style={{ left: `${point.cx * 100}%`, top: `${point.cy * 100}%` }}
+              onClick={(e) => { e.stopPropagation(); setHeard(false); setDraft(null); }} title={pointer!.say} />
+          ))}
           {point && !heard && !draft && (
             <div
-              className="said" data-note onClick={(e) => e.stopPropagation()}
+              className="pointer-say" data-note onClick={(e) => e.stopPropagation()}
               style={{
-                // beside the point, and above it when it's low on the screen, so the spot itself stays clear
-                ...(point.y > 0.6 ? { bottom: `calc(${(1 - point.y) * 100}% + 22px)` } : { top: `calc(${point.y * 100}% - 14px)` }),
-                ...(point.x > 0.6 ? { right: `calc(${(1 - point.x) * 100}% + 22px)` } : { left: `calc(${point.x * 100}% + 22px)` }),
+                // beside the spot (or below the area), and above it when it's low, so the spot stays clear
+                ...(point.area
+                  ? (point.y + point.h > 0.6 ? { bottom: `calc(${(1 - point.y) * 100}% + 12px)` } : { top: `calc(${(point.y + point.h) * 100}% + 12px)` })
+                  : (point.cy > 0.6 ? { bottom: `calc(${(1 - point.cy) * 100}% + 22px)` } : { top: `calc(${point.cy * 100}% - 14px)` })),
+                ...(point.area
+                  ? (point.x > 0.6 ? { right: `calc(${(1 - point.x - point.w) * 100}%)` } : { left: `${point.x * 100}%` })
+                  : (point.cx > 0.6 ? { right: `calc(${(1 - point.cx) * 100}% + 22px)` } : { left: `calc(${point.cx * 100}% + 22px)` })),
               }}
             >
-              <div className="who">{session.title.slice(0, 60)} <span>points here</span></div>
-              {point.say && <p>{point.say}</p>}
+              <div className="who">{session.title.slice(0, 60)} <span>· {ago(pointer!.at)}</span></div>
+              {pointer!.say && <p>{pointer!.say}</p>}
+              {pointer!.replies.length > 0 && <div className="replied">You replied {ago(pointer!.replies.at(-1)!.at)}: {pointer!.replies.at(-1)!.text}</div>}
               <div className="row">
                 <button className="ghost" onClick={() => setHeard(true)}>Got it</button>
-                <button className="primary" onClick={() => setDraft({ x: point.x, y: point.y })}>Reply here</button>
+                <button className="primary" onClick={() => { setReplyTo(pointer!); setDraft({ x: point.cx, y: point.cy }); }}>Reply here</button>
               </div>
             </div>
           )}
@@ -152,7 +166,7 @@ export function Stage({ session, project, screens, index, notes, at, point, scou
                 }}
               >
                 <textarea
-                  autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={`A note for ${session.title.slice(0, 40)}`}
+                  autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={replyTo ? "Your reply" : `A note for ${session.title.slice(0, 40)}`}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
                     if (e.key === "Escape") { e.stopPropagation(); setDraft(null); }

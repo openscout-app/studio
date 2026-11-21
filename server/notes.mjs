@@ -65,6 +65,16 @@ function scout(args, timeout = 60e3) {
 export function message(n) {
   const where = `${Math.round(n.x * 100)}% across, ${Math.round(n.y * 100)}% down`;
   const of = n.screen.url ? ` of ${n.screen.url}` : n.screen.file ? ` (${n.screen.file})` : "";
+  if (n.re) {
+    return [
+      `A reply from Scout Canvas to what you pointed at on a screen you took${of}, at ${where} [scout-canvas:${n.id}] (pointer ${n.re}).`,
+      ...(n.reSay ? ["", `You said: ${n.reSay}`] : []),
+      "",
+      `They answered: ${n.text}`,
+      "",
+      `The screen is ${path.join(IMG, `${n.screen.hash}.${n.screen.ext}`)}. Answer here as usual; the canvas shows your reply beside theirs.`,
+    ].join("\n");
+  }
   return [
     `A note from Scout Canvas on a screen you took${of}, at ${where} [scout-canvas:${n.id}]:`,
     "",
@@ -116,7 +126,7 @@ export async function notes() {
   }));
 }
 
-export function addNote({ session, project, cwd, screen, x, y, text }) {
+export function addNote({ session, project, cwd, screen, x, y, text, re, reSay }) {
   if (!session || !screen?.hash || typeof text !== "string" || !text.trim()) return null;
   const n = {
     id: `n_${crypto.randomBytes(5).toString("hex")}`,
@@ -124,6 +134,8 @@ export function addNote({ session, project, cwd, screen, x, y, text }) {
     screen: { hash: screen.hash, ext: screen.ext || "png", w: screen.w, h: screen.h, url: screen.url || null, file: screen.file || null },
     x: Math.min(1, Math.max(0, Number(x) || 0)), y: Math.min(1, Math.max(0, Number(y) || 0)),
     text: text.trim().slice(0, 4000), at: Date.now(), trail: [],
+    // a reply to a pointer the session made: the session hears what it is an answer to
+    ...(typeof re === "string" && /^p_[a-z0-9]+$/.test(re) ? { re, reSay: String(reSay || "").slice(0, 2000) } : {}),
   };
   // the session is told where the screen is, so it has to be on disk
   materialize(n.screen.hash, n.screen.ext);
