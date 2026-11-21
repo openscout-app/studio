@@ -387,7 +387,7 @@ button { font: inherit; color: inherit; }
 }
 .agent-cursor.flip .tag { left: auto; right: 4px; }
 .agent-cursor .who { color: var(--ink); font-family: var(--mono); letter-spacing: .04em; }
-.agent-cursor .say { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.agent-cursor .say { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 @media (prefers-reduced-motion: reduce) {
   .agent-cursor { transition: none; }
   .agent-cursor .drift, .agent-cursor .sway > path { animation: none; }

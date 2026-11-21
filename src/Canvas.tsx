@@ -184,7 +184,7 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened }:
           <AreaView key={a.session.id} area={a} inView={inView} byScreen={byScreen} moved={moved} onOpen={onOpen} onMore={onMore} opened={opened.has(a.session.id)} />
         ))}
         {working.filter((w) => inView(w.area.box)).map((w) => (
-          <AgentCursor key={w.area.session.id} at={w.at} k={cam.k} say={w.area.session.title} flip={w.at.x > bounds.w - 320} />
+          <AgentCursor key={w.area.session.id} at={w.at} k={cam.k} say={w.area.session.now || w.area.session.title} title={w.area.session.title} flip={w.at.x > bounds.w - 380} />
         ))}
       </div>
       <MapDock frames={frames} bounds={bounds} cam={cam} size={size} agents={working.map((w) => w.at)}
@@ -218,10 +218,10 @@ const CURSOR_D = roundedPolygon([[0, 0, 4.5], [37.5, 28.2, 8], [18.3, 34.4, 5], 
 const MEDIA_TIP = 64;
 
 /** `k` is the camera's scale: the cursor keeps its size on screen. */
-function AgentCursor({ at, k, say, flip }: { at: { x: number; y: number }; k: number; say: string; flip: boolean }) {
+function AgentCursor({ at, k, say, title, flip }: { at: { x: number; y: number }; k: number; say: string; title: string; flip: boolean }) {
   const shape = { d: CURSOR_D, vectorEffect: "non-scaling-stroke" as const };
   return (
-    <div className={`agent-cursor${flip ? " flip" : ""}`} style={{ left: at.x, top: at.y, scale: `${1 / k}` }} aria-label={`Claude is working: ${say}`}>
+    <div className={`agent-cursor${flip ? " flip" : ""}`} style={{ left: at.x, top: at.y, scale: `${1 / k}` }} aria-label={`Claude, working on ${title}: ${say}`} title={`${title}: ${say}`}>
       <div className="drift">
         <svg width="32" height="36" viewBox="-6 -3 32 36" aria-hidden="true">
           <g className="sway" transform="scale(0.6)">
@@ -230,7 +230,7 @@ function AgentCursor({ at, k, say, flip }: { at: { x: number; y: number }; k: nu
             <path {...shape} className="light" />
           </g>
         </svg>
-        <span className="tag"><HarnessCoin size={16} /><span className="who">Claude</span>{k < 0.6 && <span className="say">{say}</span>}<Working /></span>
+        <span className="tag"><HarnessCoin size={16} /><span className="who">Claude</span><span className="say">{say}</span><Working /></span>
       </div>
     </div>
   );

@@ -160,6 +160,8 @@ export async function canvas(hours = 72) {
       title: [d.customTitle, d.aiTitle, d.title, o?.name, d.sessionName].find((t) => t && !/^session-[a-z0-9]+-[a-z0-9]+/.test(t)) || own.prompt.slice(0, 80) || rec.id.slice(0, 8),
       prompt: own.prompt, firstAt: own.firstAt, lastAt,
       open: !!o, working, attention: d.attention || d.waitingFor || null,
+      // what it did last, from it or one of its subagents, whichever was later
+      now: all.map((s) => s.now).filter(Boolean).sort((a, b) => b.at - a.at)[0]?.text || null,
       screens: screens.map((sc) => ({
         id: `${rec.id}:${sc.hash}`, hash: sc.hash, ext: sc.ext, w: sc.w, h: sc.h, at: sc.at,
         tool: sc.tool, url: sc.url, file: sc.file, caption: sc.caption, before: sc.before || null, open: !!sc.open,

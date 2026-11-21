@@ -7,6 +7,7 @@
 // until it is first shown; only where it is (which line of which file) is kept until then.
 import fs from "node:fs";
 import path from "node:path";
+import { describe, said } from "./doing.mjs";
 import crypto from "node:crypto";
 import { IMG } from "./paths.mjs";
 import { imageSize } from "./image-size.mjs";
@@ -27,6 +28,8 @@ function fresh(file, owner) {
     prompt: "", turn: 0, said: "", uses: new Map(),
     screens: [], turnScreens: [], lastOf: new Map(),
     mark: null, arrived: {}, answers: {},
+    // what it did last, in a few words, and when
+    now: null,
   };
 }
 
@@ -177,9 +180,10 @@ function onEntry(s, e) {
     s.lastStop = m.stop_reason || s.lastStop;
     if (!Array.isArray(content)) return;
     for (const b of content) {
-      if (b?.type === "tool_use") { s.uses.set(b.id, { name: b.name, input: b.input || {} }); s.openTools++; }
+      if (b?.type === "tool_use") { s.uses.set(b.id, { name: b.name, input: b.input || {} }); s.openTools++; s.now = { at, text: describe(b.name, b.input || {}) }; }
       if (b?.type === "text" && b.text?.trim()) {
         s.said = b.text;
+        if (said(b.text)) s.now = { at, text: said(b.text) };
         if (s.mark) for (const id of s.mark) s.answers[id].push({ at, text: b.text.trim().slice(0, 4000) });
       }
     }

@@ -7,6 +7,8 @@ export type Screen = {
 export type Session = {
   id: string; cwd: string; branch: string; title: string; prompt: string;
   firstAt: number; lastAt: number; open: boolean; working: boolean; attention: unknown;
+  /** what it did last, in a few words */
+  now: string | null;
   screens: Screen[];
 };
 export type Project = { name: string; root: string; sessions: Session[] };
