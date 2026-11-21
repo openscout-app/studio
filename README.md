@@ -15,6 +15,8 @@ It opens http://localhost:4801. Add `--no-open` to skip the browser, or `--port 
 From a clone:
 
 ```sh
+git clone https://github.com/openscout-app/scout-canvas.git
+cd scout-canvas
 npm install
 npm run build
 npm start          # or `npm run dev` for hot reload
@@ -96,3 +98,7 @@ npm publish        # builds the app first (prepack), then publishes @openscout/c
 npm test           # pairing, image sizes, prompt cleanup
 npx tsc --noEmit
 ```
+
+## License
+
+Apache-2.0, as Scout is. See [LICENSE](LICENSE).

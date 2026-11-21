@@ -2,12 +2,13 @@
   "name": "@openscout/canvas",
   "version": "0.1.0",
   "description": "What your agents make, on Scout's canvas. Pin a note on a screen and Scout takes it to the session that made it.",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "homepage": "https://openscout.app",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/arach/scout-canvas.git"
+    "url": "git+https://github.com/openscout-app/scout-canvas.git"
   },
+  "bugs": "https://github.com/openscout-app/scout-canvas/issues",
   "type": "module",
   "bin": {
     "scout-canvas": "bin/scout-canvas.mjs"
