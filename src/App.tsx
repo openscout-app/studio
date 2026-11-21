@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type CanvasData, type Note, type Screen } from "./api";
 import { Canvas } from "./Canvas";
+import { Arrival, Progress } from "./Loading";
 import { Stage } from "./Stage";
 import { layout, type Area } from "./scene";
 
@@ -23,14 +24,19 @@ export function App() {
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<Open | null>(readHash);
 
-  const loadCanvas = useCallback(() => api.canvas(hours).then((d) => { setData(d); setError(null); }, (e) => setError(String(e.message || e))), [hours]);
   const loadNotes = useCallback(() => api.notes().then(setNotes, () => {}), []);
+  // ask often while sessions are still being read, then settle to every 15 seconds
   useEffect(() => {
     try { localStorage.setItem("scout-canvas:hours", String(hours)); } catch {}
-    loadCanvas();
-    const t = setInterval(loadCanvas, 15e3);
-    return () => clearInterval(t);
-  }, [loadCanvas]);
+    let stop = false, timer = 0;
+    setData((d) => (d && d.hours === hours ? d : null));
+    const tick = () => api.canvas(hours).then(
+      (d) => { if (stop) return; setData(d); setError(null); timer = window.setTimeout(tick, d.loading.done ? 15e3 : 450); },
+      (e) => { if (stop) return; setError(String(e.message || e)); timer = window.setTimeout(tick, 5e3); },
+    );
+    tick();
+    return () => { stop = true; clearTimeout(timer); };
+  }, [hours]);
   useEffect(() => { loadNotes(); const t = setInterval(loadNotes, 4e3); return () => clearInterval(t); }, [loadNotes]);
   useEffect(() => {
     const on = () => setOpen(readHash());
@@ -64,6 +70,12 @@ export function App() {
     };
     return layout(shaped, opened);
   }, [data, opened, keep]);
+  // land on the latest session the first time there is one; a new window lands again
+  // (from the top of its repository's frame, so the repository's name shows above it)
+  const focus = useMemo(() => {
+    const f = scene?.frames[0], a = f?.areas[0];
+    return f && a ? { x: a.box.x, y: f.box.y, w: a.box.w, h: a.box.y + a.box.h - f.box.y } : null;
+  }, [scene?.frames[0]?.project.root, scene?.frames[0]?.areas[0]?.session.id]);
 
   const counts = useMemo(() => {
     const ss = data?.projects.flatMap((p) => p.sessions) || [];
@@ -114,18 +126,13 @@ export function App() {
           {data ? (data.scout.up ? "Scout is up" : "Scout isn't running") : "Looking for Scout…"}
         </span>
       </header>
-      {scene && scene.frames.length > 0 ? (
-        <Canvas frames={scene.frames} bounds={scene.bounds} notes={notes} onOpen={onOpen} opened={opened}
-          onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
-      ) : (
-        <div style={{ position: "relative" }}>
-          <div className="empty">
-            {error ? <div><b>The canvas couldn't load</b>{error}</div>
-              : !data ? <div><b>Reading your sessions</b>The first read lifts every screen out of the transcripts, and can take a few seconds.</div>
-              : <div><b>No screens here</b>{query || filter !== "all" ? "Nothing matches. Clear the search or the filter." : `No Claude Code session took a screen in the last ${hours} hours.`}</div>}
-          </div>
-        </div>
-      )}
+      <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all"} ready={!!scene && scene.frames.length > 0}>
+        {scene && scene.frames.length > 0 && (
+          <Canvas key={hours} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened}
+            onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
+        )}
+        {data && <Progress loading={data.loading} counts={counts} />}
+      </Arrival>
       {target && open && (
         <Stage
           key={target.session.id} session={target.session} project={target.project} screens={target.screens} index={target.index}

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { IMG } from "./paths.mjs";
+import { materialize } from "./transcripts.mjs";
 import { canvas } from "./sessions.mjs";
 import { addNote, handOff, keep, notes, remove, retry, startSweep } from "./notes.mjs";
 
@@ -69,7 +70,7 @@ export async function handle(req, res) {
 
   const img = p.match(/^\/img\/(t\/)?([0-9a-f]{16})\.(png|jpg|webp|gif)$/);
   if (img) {
-    let file = path.join(IMG, `${img[2]}.${img[3]}`);
+    let file = materialize(img[2], img[3]) || path.join(IMG, `${img[2]}.${img[3]}`);
     if (img[1] && fs.existsSync(file)) file = (await thumb(file, img[2])) || file;
     if (!fs.existsSync(file)) { send(res, 404, { error: "no such screen" }); return true; }
     res.writeHead(200, { "content-type": TYPES[path.extname(file).slice(1)], "cache-control": "max-age=31536000, immutable" });
@@ -81,7 +82,7 @@ export async function handle(req, res) {
       const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 72));
       return send(res, 200, await canvas(hours)), true;
     }
-    if (p === "/api/notes" && req.method === "GET") return send(res, 200, { notes: notes() }), true;
+    if (p === "/api/notes" && req.method === "GET") return send(res, 200, { notes: await notes() }), true;
     if (p === "/api/notes" && req.method === "POST") {
       const n = addNote(await body(req));
       return send(res, n ? 200 : 400, n ? { note: n } : { error: "a note needs a session, a screen and some words" }), true;

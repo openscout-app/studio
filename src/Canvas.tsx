@@ -27,16 +27,22 @@ export function Working() {
 
 type Props = {
   frames: Frame[]; bounds: Box; notes: Note[];
+  /** where to land when the canvas first shows: the latest session */
+  focus: Box | null;
   onOpen: (area: Area, s: Screen, at?: { x: number; y: number }) => void;
   onMore: (sessionId: string) => void; opened: Set<string>;
 };
 
-export function Canvas({ frames, bounds, notes, onOpen, onMore, opened }: Props) {
+const still = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** When each thing was first drawn, so only new arrivals fade in, not cards scrolled back into view. */
+const seen = new Map<string, number>();
+
+export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened }: Props) {
   const view = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 1200, h: 800 });
-  const [cam, setCam] = useState<Cam | null>(() => {
-    try { return JSON.parse(localStorage.getItem("scout-canvas:cam") || "null"); } catch { return null; }
-  });
+  const [cam, setCam] = useState<Cam | null>(null);
+  const glide = useRef(0);
   const [panning, setPanning] = useState(false);
   const moved = useRef(false);
 
@@ -48,12 +54,35 @@ export function Canvas({ frames, bounds, notes, onOpen, onMore, opened }: Props)
     return () => ro.disconnect();
   }, []);
 
-  const fit = () => {
-    const k = clampK(Math.min((size.w - 40) / bounds.w, 1));
-    setCam({ x: (size.w - bounds.w * k) / 2, y: 12, k });
+  /** Ease the camera to a place, unless the viewer prefers no motion. */
+  const moveTo = (to: Cam, from?: Cam) => {
+    cancelAnimationFrame(glide.current);
+    const a = from || cam;
+    if (!a || still()) return setCam(to);
+    const t0 = performance.now(), ms = 620;
+    const step = (t: number) => {
+      const p = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - p, 3);
+      setCam({ x: a.x + (to.x - a.x) * e, y: a.y + (to.y - a.y) * e, k: a.k + (to.k - a.k) * e });
+      if (p < 1) glide.current = requestAnimationFrame(step);
+    };
+    glide.current = requestAnimationFrame(step);
   };
-  useEffect(() => { if (!cam && bounds.w > 0) fit(); }, [bounds.w, size.w]);
-  useEffect(() => { try { if (cam) localStorage.setItem("scout-canvas:cam", JSON.stringify(cam)); } catch {} }, [cam]);
+  const fitCam = (): Cam => {
+    const k = clampK(Math.min((size.w - 40) / bounds.w, 1));
+    return { x: (size.w - bounds.w * k) / 2, y: 12, k };
+  };
+  const fit = () => moveTo(fitCam());
+  // land on the latest session: readable, its head near the top, gliding in from a little further out
+  useEffect(() => {
+    if (cam || size.w < 100 || bounds.w <= 0) return;
+    if (!focus) return setCam(fitCam());
+    const k = clampK(Math.min(1, (size.w - 96) / focus.w));
+    const to = { k, x: (size.w - focus.w * k) / 2 - focus.x * k, y: 16 - focus.y * k };
+    const from = { k: k * 0.86, x: (size.w - focus.w * k * 0.86) / 2 - focus.x * k * 0.86, y: 40 - focus.y * k * 0.86 };
+    setCam(from);
+    moveTo(to, from);
+  }, [focus, size.w, bounds.w]);
+  useEffect(() => () => cancelAnimationFrame(glide.current), []);
 
   // wheel: scroll pans, pinch (or ⌘/ctrl) zooms around the pointer
   useEffect(() => {
@@ -61,6 +90,7 @@ export function Canvas({ frames, bounds, notes, onOpen, onMore, opened }: Props)
     const onWheel = (e: WheelEvent) => {
       if ((e.target as HTMLElement).closest(".stage")) return;
       e.preventDefault();
+      cancelAnimationFrame(glide.current);
       setCam((c) => {
         if (!c) return c;
         if (e.ctrlKey || e.metaKey) {
@@ -78,6 +108,7 @@ export function Canvas({ frames, bounds, notes, onOpen, onMore, opened }: Props)
 
   const down = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    cancelAnimationFrame(glide.current);
     const start = { x: e.clientX, y: e.clientY, cam: cam! };
     moved.current = false;
     const move = (ev: PointerEvent) => {
@@ -92,11 +123,11 @@ export function Canvas({ frames, bounds, notes, onOpen, onMore, opened }: Props)
     window.addEventListener("pointerup", up);
   };
 
-  const zoomBy = (f: number) => setCam((c) => {
-    if (!c) return c;
-    const k = clampK(c.k * f), px = size.w / 2, py = size.h / 2;
-    return { k, x: px - ((px - c.x) / c.k) * k, y: py - ((py - c.y) / c.k) * k };
-  });
+  const zoomBy = (f: number) => {
+    if (!cam) return;
+    const k = clampK(cam.k * f), px = size.w / 2, py = size.h / 2;
+    moveTo({ k, x: px - ((px - cam.x) / cam.k) * k, y: py - ((py - cam.y) / cam.k) * k });
+  };
 
   const byScreen = useMemo(() => {
     const m = new Map<string, Note[]>();
@@ -117,7 +148,7 @@ export function Canvas({ frames, bounds, notes, onOpen, onMore, opened }: Props)
     <div className={`viewport${panning ? " panning" : ""}`} ref={view} onPointerDown={down} style={style}>
       <div className="world" style={{ transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.k})`, width: bounds.w, height: bounds.h }}>
         {frames.filter((f) => inView(f.box)).map((f) => (
-          <div key={f.project.root} className="frame" style={{ left: f.box.x, top: f.box.y, width: f.box.w, height: f.box.h }}>
+          <div key={f.project.root} className={`frame${fresh(`frame:${f.project.root}`) ? " arriving" : ""}`} style={{ left: f.box.x, top: f.box.y, width: f.box.w, height: f.box.h }}>
             <div className="frame-head">
               <h2>{f.project.name}</h2>
               <span className="where">{f.project.root.replace(/^\/Users\/[^/]+/, "~")}</span>
@@ -166,7 +197,7 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, opened }: {
         const pins = byScreen.get(sc.id) || [];
         return (
           <button
-            key={sc.id} className="card" style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+            key={sc.id} className={`card${fresh(sc.id) ? " arriving" : ""}`} style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
             onClick={() => { if (!moved.current) onOpen(area, sc); }}
             onContextMenu={(e) => {
               e.preventDefault();
@@ -193,6 +224,13 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, opened }: {
       })}
     </>
   );
+}
+
+/** True while a thing is new: drawn for the first time less than the fade's length ago. */
+function fresh(id: string) {
+  const now = performance.now();
+  if (!seen.has(id)) seen.set(id, now);
+  return now - seen.get(id)! < 420;
 }
 
 export function kindOf(sc: Screen) {

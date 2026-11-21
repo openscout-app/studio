@@ -2,7 +2,9 @@
 // about them, which earlier screen each one follows, and the answers to notes Scout carried in.
 //
 // A transcript is read once and then only from where the last read stopped, so a long session
-// that is still running costs one small read per refresh.
+// that is still running costs one small read per refresh. Reading yields between steps, so the
+// server answers while a long transcript is still being read. An image stays in its transcript
+// until it is first shown; only where it is (which line of which file) is kept until then.
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -15,10 +17,12 @@ const MIN_W = 320, MIN_H = 200;
 export const MARK = /\[scout-canvas:(n_[a-z0-9]+)\]/g;
 
 const states = new Map(); // transcript path -> parse state
+/** hash -> where its image is: { file, at (byte offset of its line), len, ext } */
+const places = new Map();
 
 function fresh(file, owner) {
   return {
-    file, owner, offset: 0, carry: "",
+    file, owner, offset: 0, carry: Buffer.alloc(0), line: null,
     cwd: "", firstAt: 0, lastAt: 0, lastStop: "", openTools: 0,
     prompt: "", turn: 0, said: "", uses: new Map(),
     screens: [], turnScreens: [], lastOf: new Map(),
@@ -61,18 +65,48 @@ export function plain(text) {
     .trim();
 }
 
-function saveImage(b64, media) {
-  const hash = crypto.createHash("sha1").update(b64).digest("hex").slice(0, 16);
-  const ext = media === "image/jpeg" ? "jpg" : media === "image/webp" ? "webp" : media === "image/gif" ? "gif" : "png";
-  const file = path.join(IMG, `${hash}.${ext}`);
-  let buf = null;
-  if (!fs.existsSync(file)) {
-    buf = Buffer.from(b64, "base64");
-    fs.mkdirSync(IMG, { recursive: true });
-    fs.writeFileSync(file, buf);
+const hashOf = (b64) => crypto.createHash("sha1").update(b64).digest("hex").slice(0, 16);
+const extOf = (media) => media === "image/jpeg" ? "jpg" : media === "image/webp" ? "webp" : media === "image/gif" ? "gif" : "png";
+
+/** An image's hash and size, read from the start of its data; where it is, remembered for later. */
+function noteImage(s, b64, media) {
+  const hash = hashOf(b64);
+  const ext = extOf(media);
+  // the header is near the start; a JPEG's can sit behind its metadata, so read more if it must
+  const size = imageSize(Buffer.from(b64.slice(0, 1 << 18), "base64")) || imageSize(Buffer.from(b64, "base64"));
+  if (!size) return null;
+  if (!places.has(hash) && s.line) places.set(hash, { file: s.file, at: s.line.at, len: s.line.len, ext });
+  return { hash, ext, ...size };
+}
+
+/**
+ * Write an image out of its transcript, the first time it's asked for. Returns its path, or null
+ * if nothing says where it is.
+ */
+export function materialize(hash, ext) {
+  const out = path.join(IMG, `${hash}.${ext}`);
+  if (fs.existsSync(out)) return out;
+  const p = places.get(hash);
+  if (!p) return null;
+  let entry;
+  try {
+    const fd = fs.openSync(p.file, "r");
+    const buf = Buffer.alloc(p.len);
+    try { fs.readSync(fd, buf, 0, p.len, p.at); } finally { fs.closeSync(fd); }
+    entry = JSON.parse(buf.toString("utf8"));
+  } catch { return null; }
+  for (const r of Array.isArray(entry?.message?.content) ? entry.message.content : []) {
+    for (const part of Array.isArray(r?.content) ? r.content : []) {
+      const b64 = part?.type === "image" && part.source?.data;
+      if (!b64 || hashOf(b64) !== hash) continue;
+      fs.mkdirSync(IMG, { recursive: true });
+      const tmp = `${out}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, Buffer.from(b64, "base64"));
+      fs.renameSync(tmp, out);
+      return out;
+    }
   }
-  const size = imageSize(buf || fs.readFileSync(file));
-  return size ? { hash, ext, ...size } : null;
+  return null;
 }
 
 /** End a turn: keep its last screen of each subject, and give each the screen it follows. */
@@ -127,7 +161,7 @@ function onEntry(s, e) {
       const text = textOf(parts);
       for (const p of parts) {
         if (p?.type !== "image" || p.source?.type !== "base64") continue;
-        const img = saveImage(p.source.data, p.source.media_type);
+        const img = noteImage(s, p.source.data, p.source.media_type);
         if (!img || img.w < MIN_W || img.h < MIN_H) continue;
         const url = text.match(/"url"\s*:\s*"([^"]+)"/)?.[1] || use.input.url || null;
         s.turnScreens.push({
@@ -152,34 +186,54 @@ function onEntry(s, e) {
   }
 }
 
-/** Read whatever the transcript gained since last time. Returns the state, or null if it's gone. */
+const tick = () => new Promise((r) => setImmediate(r));
+const reading = new Map(); // transcript path -> the read in progress
+
+/**
+ * Read whatever the transcript gained since last time, a step at a time. Resolves to the state, or
+ * null if the file is gone. Two reads of one file share the one in progress.
+ */
 export function readTranscript(file, owner) {
+  if (!reading.has(file)) reading.set(file, read(file, owner).finally(() => reading.delete(file)));
+  return reading.get(file);
+}
+
+async function read(file, owner) {
   let st;
   try { st = fs.statSync(file); } catch { states.delete(file); return null; }
   let s = states.get(file);
   if (!s || st.size < s.offset) { s = fresh(file, owner); states.set(file, s); }
+  s.size = st.size;
   if (st.size > s.offset) {
     const fd = fs.openSync(file, "r");
     try {
-      const CHUNK = 8 << 20;
+      const STEP = 4 << 20;
       while (s.offset < st.size) {
-        const len = Math.min(CHUNK, st.size - s.offset);
-        const buf = Buffer.alloc(len);
-        fs.readSync(fd, buf, 0, len, s.offset);
+        const len = Math.min(STEP, st.size - s.offset);
+        const chunk = Buffer.alloc(len);
+        fs.readSync(fd, chunk, 0, len, s.offset);
+        const data = s.carry.length ? Buffer.concat([s.carry, chunk]) : chunk;
+        const base = s.offset - s.carry.length; // where data[0] sits in the file
         s.offset += len;
-        const lines = (s.carry + buf.toString("utf8")).split("\n");
-        s.carry = lines.pop();
-        for (const line of lines) {
-          if (!line) continue;
-          let e; try { e = JSON.parse(line); } catch { continue; }
+        let pos = 0;
+        for (let nl = data.indexOf(10, pos); nl >= 0; pos = nl + 1, nl = data.indexOf(10, pos)) {
+          if (nl === pos) continue;
+          let e; try { e = JSON.parse(data.toString("utf8", pos, nl)); } catch { continue; }
+          s.line = { at: base + pos, len: nl - pos };
           onEntry(s, e);
         }
+        s.carry = Buffer.from(data.subarray(pos));
+        s.line = null;
+        await tick();
       }
     } finally { fs.closeSync(fd); }
   }
   s.mtime = st.mtimeMs;
   return s;
 }
+
+/** The parse state of a transcript read so far, without reading it. */
+export const stateOf = (file) => states.get(file) || null;
 
 /** A turn still open has screens that aren't settled yet; show them anyway, as they stand. */
 export function screensOf(s) {

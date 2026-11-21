@@ -13,6 +13,7 @@ import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { HOME, IMG, NOTES } from "./paths.mjs";
 import { isOpen, stateOf } from "./sessions.mjs";
+import { materialize } from "./transcripts.mjs";
 
 let listeners = new Set();
 export const onChange = (fn) => (listeners.add(fn), () => listeners.delete(fn));
@@ -108,11 +109,11 @@ export async function handOff(id) {
 }
 
 /** Notes, each with what its session made of it so far. */
-export function notes() {
-  return load().map((n) => {
-    const s = n.trail.some((t) => t.what === "sent") ? stateOf(n.session) : null;
+export async function notes() {
+  return Promise.all(load().map(async (n) => {
+    const s = n.trail.some((t) => t.what === "sent") ? await stateOf(n.session) : null;
     return { ...n, arrivedAt: s?.arrived[n.id] || null, answers: s?.answers[n.id] || [] };
-  });
+  }));
 }
 
 export function addNote({ session, project, cwd, screen, x, y, text }) {
@@ -124,6 +125,8 @@ export function addNote({ session, project, cwd, screen, x, y, text }) {
     x: Math.min(1, Math.max(0, Number(x) || 0)), y: Math.min(1, Math.max(0, Number(y) || 0)),
     text: text.trim().slice(0, 4000), at: Date.now(), trail: [],
   };
+  // the session is told where the screen is, so it has to be on disk
+  materialize(n.screen.hash, n.screen.ext);
   save([...load(), n]);
   deliver(n.id);
   return n;

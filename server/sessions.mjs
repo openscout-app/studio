@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { CLAUDE_PROJECTS, RUNTIME } from "./paths.mjs";
-import { readTranscript, screensOf } from "./transcripts.mjs";
+import { readTranscript, screensOf, stateOf as parsed } from "./transcripts.mjs";
 
 /** a session that wrote in the last this-long is working, unless it said it was done */
 const WORKING_MS = 90e3;
@@ -89,14 +89,14 @@ function transcriptsSince(since) {
     for (const n of names) {
       const p = path.join(base, n);
       if (n.endsWith(".jsonl")) {
-        try { if (fs.statSync(p).mtimeMs >= since) out.push({ file: p, session: n.slice(0, -6) }); } catch {}
+        try { const st = fs.statSync(p); if (st.mtimeMs >= since) out.push({ file: p, session: n.slice(0, -6), mtime: st.mtimeMs, size: st.size }); } catch {}
       } else if (!n.includes(".")) {
         const sub = path.join(p, "subagents");
         let subs = [];
         try { subs = fs.readdirSync(sub).filter((x) => x.endsWith(".jsonl")); } catch { continue; }
         for (const x of subs) {
           const f = path.join(sub, x);
-          try { if (fs.statSync(f).mtimeMs >= since) out.push({ file: f, session: n, subagent: true }); } catch {}
+          try { const st = fs.statSync(f); if (st.mtimeMs >= since) out.push({ file: f, session: n, subagent: true, mtime: st.mtimeMs, size: st.size }); } catch {}
         }
       }
     }
@@ -104,13 +104,39 @@ function transcriptsSince(since) {
   return out;
 }
 
-/** What the canvas draws, for the last `hours`. */
+// ---- reading in the background, newest first
+//
+// A load lists the window's transcripts, newest first, and reads them one after another. The
+// canvas is drawn from whatever has been read so far, so the latest session shows within a moment
+// and the rest arrive behind it. Once a load is done, the next ask for the canvas starts a fresh
+// one, which costs little: each transcript is read only from where it stopped.
+const loads = new Map(); // hours -> load
+function load(hours) {
+  const was = loads.get(hours);
+  if (was && (!was.done || Date.now() - was.endedAt < 10e3)) return was;
+  const files = transcriptsSince(Date.now() - hours * 3600e3).sort((a, b) => b.mtime - a.mtime);
+  const l = { files, done: false, endedAt: 0, first: !was, start: new Map(files.map((t) => [t.file, parsed(t.file)?.offset || 0])) };
+  loads.set(hours, l);
+  (async () => {
+    for (const t of files) await readTranscript(t.file, t.session).catch(() => null);
+    l.done = true;
+    l.endedAt = Date.now();
+  })();
+  return l;
+}
+
+/** What the canvas draws, for the last `hours`: what has been read so far, and how far along. */
 export async function canvas(hours = 72) {
   const since = Date.now() - hours * 3600e3;
+  const l = load(hours);
   const [disc, open] = [await discover(), openSessions()];
   const bySession = new Map();
-  for (const t of transcriptsSince(since)) {
-    const s = readTranscript(t.file, t.session);
+  let read = 0, total = 0;
+  for (const t of l.files) {
+    const s = parsed(t.file);
+    const from = l.start.get(t.file) || 0;
+    total += Math.max(0, t.size - from);
+    read += s ? Math.max(0, Math.min(s.offset, t.size) - from) : 0;
     if (!s) continue;
     let rec = bySession.get(t.session);
     if (!rec) bySession.set(t.session, (rec = { id: t.session, own: null, parts: [] }));
@@ -145,11 +171,16 @@ export async function canvas(hours = 72) {
   const list = [...projects.values()];
   for (const p of list) p.sessions.sort((a, b) => b.lastAt - a.lastAt);
   list.sort((a, b) => b.sessions[0].lastAt - a.sessions[0].lastAt);
-  return { at: Date.now(), hours, scout: { up: disc.up }, projects: list };
+  const sessions = new Set(l.files.map((t) => t.session)).size;
+  return {
+    at: Date.now(), hours, scout: { up: disc.up }, projects: list,
+    // how far the read has come, by bytes, so a bar moves evenly
+    loading: { done: l.done, first: l.first, read, total, sessions },
+  };
 }
 
-/** The parse state of a session's own transcript, for the answers to notes sent into it. */
-export function stateOf(sessionId) {
+/** The parse state of a session's own transcript, read up to now, for the answers to notes sent into it. */
+export async function stateOf(sessionId) {
   let dirs = [];
   try { dirs = fs.readdirSync(CLAUDE_PROJECTS); } catch { return null; }
   for (const d of dirs) {

@@ -217,3 +217,54 @@ button { font: inherit; color: inherit; }
 .stage .nav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 5; }
 .stage .nav.prev { left: 10px; }
 .stage .nav.next { right: 10px; }
+
+/* ---- the way in: a short sequence, then the canvas lands on the latest session */
+.arrival-wrap { position: relative; min-height: 0; }
+.landed { position: absolute; inset: 0; animation: land 360ms cubic-bezier(.2,.7,.2,1) both; }
+.landed > .viewport { position: absolute; inset: 0; }
+@keyframes land { from { opacity: 0; } to { opacity: 1; } }
+
+.arrival { position: absolute; inset: 0; display: grid; place-content: center; justify-items: start; gap: 22px; padding: 24px; }
+.arrival .glyph { width: 28px; height: 32px; color: var(--ink); margin-left: -6px; animation: breathe 1.6s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+.arrival ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; min-width: min(360px, 80vw); }
+.arrival li { display: grid; grid-template-columns: 18px auto; column-gap: 12px; row-gap: 2px; align-items: center; transition: opacity 240ms ease, color 240ms ease; }
+.arrival li.later { opacity: .35; }
+.arrival li.now .what { color: var(--ink); }
+.arrival li.done .what { color: var(--muted); }
+.arrival .what { font-size: 14px; color: var(--muted); }
+.arrival .detail { grid-column: 2; font-size: 12.5px; color: var(--dim); max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; animation: land 240ms ease both; }
+.arrival .tick { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--line-strong); position: relative; justify-self: center; }
+.arrival li.now .tick { border-color: var(--line-strong); border-top-color: var(--accent); animation: turn .8s linear infinite; }
+.arrival li.done .tick { border-color: var(--accent); background: var(--accent); }
+.arrival li.done .tick::after {
+  content: ""; position: absolute; left: 4px; top: 1.5px; width: 3px; height: 6px;
+  border: solid var(--bg); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
+}
+.arrival li.done .tick.warn { background: transparent; border-color: var(--dim); }
+.arrival li.done .tick.warn::after { border: 0; left: 5px; top: 2px; width: 1.5px; height: 5px; background: var(--dim); transform: none; }
+@keyframes turn { to { transform: rotate(360deg); } }
+
+/* reading the rest, behind the canvas */
+.progress {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 3;
+  display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-radius: 999px;
+  background: var(--bg); border: 1px solid var(--line); color: var(--muted); font-size: 12.5px; white-space: nowrap;
+  box-shadow: 0 6px 24px -12px color-mix(in srgb, black 50%, transparent);
+  animation: land 240ms ease both; transition: opacity 400ms ease 2200ms;
+}
+.progress.finished { opacity: 0; }
+.progress .bar { width: 120px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.progress .bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width 420ms ease; }
+.progress.finished .bar i { background: var(--accent); }
+@media (max-width: 640px) { .progress .bar { width: 64px; } }
+
+/* screens that arrive while reading fade in once */
+.card.arriving, .frame.arriving { animation: arrive 380ms cubic-bezier(.2,.7,.2,1) both; }
+@keyframes arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .landed, .arrival .detail, .progress, .card.arriving, .frame.arriving { animation: none; }
+  .arrival .glyph, .arrival li.now .tick { animation: none; }
+  .progress .bar i { transition: none; }
+}
