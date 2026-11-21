@@ -7,12 +7,17 @@ Each repository is a frame, each Claude Code session is an area, and the screens
 ## Run it
 
 ```sh
-npm install
-npm run build
-npm start          # http://localhost:4801; add -- --no-open to skip the browser
+npx @openscout/canvas
 ```
 
-For development, `npm run dev` serves the app with hot reload on the same port.
+It opens http://localhost:4801. Add `--no-open` to skip the browser, or `--port <n>` for another port. If Scout Canvas is already running, the command opens it. If something else holds the port, it takes the next free one.
+
+From a clone:
+
+```sh
+npm install
+npm start          # builds nothing; run `npm run build` first, or `npm run dev` for hot reload
+```
 
 You need:
 
@@ -43,6 +48,13 @@ A note goes out at once when its session is open. A closed session's note waits,
 The message carries a marker (`[scout-canvas:n_…]`). The canvas finds the marker in the session's transcript, which shows that the note arrived, and it shows what the session said after it.
 
 Notes are kept in `~/.scout-canvas/notes.json` (`SCOUT_CANVAS_HOME` moves the folder). The server listens on 127.0.0.1 only and refuses requests from other sites, so no web page can send notes into your sessions.
+
+## Publish
+
+```sh
+npm login
+npm publish        # builds the app first (prepack), then publishes @openscout/canvas
+```
 
 ## Checks
 

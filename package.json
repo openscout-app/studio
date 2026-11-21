@@ -1,20 +1,40 @@
 {
-  "name": "scout-canvas",
+  "name": "@openscout/canvas",
   "version": "0.1.0",
-  "private": true,
   "description": "What your agents make, on Scout's canvas. Pin a note on a screen and Scout takes it to the session that made it.",
+  "license": "UNLICENSED",
+  "homepage": "https://openscout.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arach/scout-canvas.git"
+  },
   "type": "module",
-  "bin": { "scout-canvas": "bin/scout-canvas.mjs" },
-  "files": ["bin", "server", "dist"],
-  "engines": { "node": ">=20" },
+  "bin": {
+    "scout-canvas": "bin/scout-canvas.mjs"
+  },
+  "files": [
+    "bin",
+    "server/*.mjs",
+    "!server/*.test.mjs",
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "start": "node bin/scout-canvas.mjs",
     "test": "node --test server/*.test.mjs",
-    "prepare": "vite build"
+    "prepack": "npm run build"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
