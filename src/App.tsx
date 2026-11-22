@@ -5,7 +5,7 @@ import { Arrival, Progress } from "./Loading";
 import { Stage } from "./Stage";
 import { layout, type Area } from "./scene";
 import { readPlace } from "./place";
-import { NO_VIEW, ViewControls, type Filter, type View } from "./Controls";
+import { NO_VIEW, START_HOURS, ViewControls, wider, type Filter, type View } from "./Controls";
 
 const SETUP = "npx github:openscout-app/scout-canvas setup";
 
@@ -24,7 +24,11 @@ function readHash(): Open | null {
 const pointerId = () => location.pathname.match(/^\/p\/(p_[a-z0-9]+)\/?$/)?.[1];
 
 export function App() {
-  const [hours, setHours] = useState(() => Number(localStorage.getItem("scout-canvas:hours")) || 72);
+  // how far back: every visit starts short. Picking a window holds it for the visit; until then the canvas
+  // widens on its own when the window holds no screens.
+  const [hours, setHours] = useState(START_HOURS);
+  const [picked, setPicked] = useState(false);
+  const pick = (h: number) => { setPicked(true); setHours(h); };
   const [data, setData] = useState<CanvasData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
@@ -64,7 +68,6 @@ export function App() {
   const loadNotes = useCallback(() => api.notes().then(setNotes, () => {}), []);
   // ask often while sessions are still being read, then settle to every 15 seconds
   useEffect(() => {
-    try { localStorage.setItem("scout-canvas:hours", String(hours)); } catch {}
     let stop = false, timer = 0;
     setData((d) => (d && d.hours === hours ? d : null));
     const tick = () => api.canvas(hours).then(
@@ -158,8 +161,13 @@ export function App() {
   // a link to a session older than this window: widen the window once everything here is read
   const found = !!linked && !!data?.projects.some((p) => p.sessions.some((s) => s.id === linked));
   useEffect(() => {
-    if (linked && data?.loading.done && data.hours === hours && !found && hours < 168) setHours(168);
+    if (linked && data?.loading.done && data.hours === hours && !found && hours < 168) setHours(wider(hours));
   }, [linked, found, data?.loading.done, hours]);
+  // nothing in the last few hours: look further back, a step at a time, unless a window was picked
+  const empty = !!data?.loading.done && data.hours === hours && !data.projects.some((p) => p.sessions.some((s) => s.screens.length));
+  useEffect(() => {
+    if (!picked && !linked && empty && hours < 72) setHours(wider(hours));
+  }, [picked, linked, empty, hours]);
 
   const onOpen = useCallback((a: Area, s: Screen, at?: { x: number; y: number }) => show({ session: a.session.id, hash: s.hash, at }), []);
 
@@ -194,7 +202,7 @@ export function App() {
       <main className="field">
         <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all" || viewing} ready={ready}
           returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
-          controls={data && <ViewControls data={data} hours={hours} setHours={setHours} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
+          controls={data && <ViewControls data={data} hours={hours} setHours={pick} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
           {scene && ready && (
             <Canvas key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened}
               onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />

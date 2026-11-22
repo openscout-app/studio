@@ -80,7 +80,7 @@ export async function handle(req, res) {
   }
   try {
     if (p === "/api/canvas" && req.method === "GET") {
-      const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 72));
+      const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 4));
       return send(res, 200, await canvas(hours)), true;
     }
     if (p === "/api/notes" && req.method === "GET") return send(res, 200, { notes: await notes() }), true;

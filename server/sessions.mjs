@@ -126,7 +126,7 @@ function load(hours) {
 }
 
 /** What the canvas draws, for the last `hours`: what has been read so far, and how far along. */
-export async function canvas(hours = 72) {
+export async function canvas(hours = 4) {
   const since = Date.now() - hours * 3600e3;
   const l = load(hours);
   const [disc, open] = [await discover(), openSessions()];

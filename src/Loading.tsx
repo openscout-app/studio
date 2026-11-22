@@ -8,7 +8,7 @@ const STEP_MS = 280; // the least each step shows, so the sequence reads as one
 type Step = { label: string; done: boolean; detail?: string; warn?: boolean };
 
 function steps(data: CanvasData | null, hours: number, ready: boolean, returning?: "back" | "link", landedOn?: string): Step[] {
-  const window = hours === 24 ? "today" : hours === 168 ? "this week" : `in the last ${hours / 24} days`;
+  const window = hours === 168 ? "this week" : hours <= 24 ? `in the last ${hours} hours` : `in the last ${hours / 24} days`;
   return [
     {
       label: "Finding Scout", done: !!data,
