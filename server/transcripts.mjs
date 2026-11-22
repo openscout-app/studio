@@ -15,7 +15,7 @@ import { imageSize } from "./image-size.mjs";
 /** smaller than this is an icon or a crop, not a screen */
 const MIN_W = 320, MIN_H = 200;
 /** a note's marker, as it reads in the message Scout delivers */
-export const MARK = /\[scout-canvas:(n_[a-z0-9]+)\]/g;
+export const MARK = /\[scout-(?:studio|canvas):(n_[a-z0-9]+)\]/g; // canvas: notes sent before the rename
 
 const states = new Map(); // transcript path -> parse state
 /** hash -> where its image is: { file, at (byte offset of its line), len, ext } */

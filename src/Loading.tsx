@@ -1,4 +1,4 @@
-// The way in: a short sequence while Scout Canvas finds Scout and your sessions, then the canvas,
+// The way in: a short sequence while Scout Studio finds Scout and your sessions, then the canvas,
 // landing on the latest session while the rest are read behind it.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CanvasData, Loading } from "./api";

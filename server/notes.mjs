@@ -64,7 +64,7 @@ export function message(n) {
   const of = n.screen.url ? ` of ${n.screen.url}` : n.screen.file ? ` (${n.screen.file})` : "";
   if (n.re) {
     return [
-      `A reply from Scout Canvas to what you pointed at on a screen you took${of}, at ${where} [scout-canvas:${n.id}] (pointer ${n.re}).`,
+      `A reply from Scout Studio to what you pointed at on a screen you took${of}, at ${where} [scout-studio:${n.id}] (pointer ${n.re}).`,
       ...(n.reSay ? ["", `You said: ${n.reSay}`] : []),
       "",
       `They answered: ${n.text}`,
@@ -73,7 +73,7 @@ export function message(n) {
     ].join("\n");
   }
   return [
-    `A note from Scout Canvas on a screen you took${of}, at ${where} [scout-canvas:${n.id}]:`,
+    `A note from Scout Studio on a screen you took${of}, at ${where} [scout-studio:${n.id}]:`,
     "",
     n.text,
     "",
@@ -107,7 +107,7 @@ export async function deliver(id) {
 export async function handOff(id) {
   const n = load().find((x) => x.id === id);
   if (!n) return null;
-  const { json, err } = await scout(["ask", "--project", n.cwd, "--harness", "claude", "--label", "scout-canvas", message(n)], 120e3);
+  const { json, err } = await scout(["ask", "--project", n.cwd, "--harness", "claude", "--label", "scout-studio", message(n)], 120e3);
   const ok = json && json.ok !== false && json.receipt?.ok !== false;
   return update(id, (x) => {
     if (ok) step(x, { what: "handed", task: json.receipt?.taskId || json.taskId || json.handle || null });

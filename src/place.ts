@@ -4,11 +4,12 @@ import type { Area } from "./scene";
 import type { Cam } from "./Canvas";
 
 export type Place = { session: string; sx: number; sy: number; k: number; at: number };
-const KEY = "scout-canvas:place";
+const KEY = "scout-studio:place";
 
 export function readPlace(): Place | null {
   try {
-    const p = JSON.parse(localStorage.getItem(KEY) || "null");
+    // "scout-canvas:place": where the canvas was before Scout Canvas became Scout Studio.
+    const p = JSON.parse(localStorage.getItem(KEY) || localStorage.getItem("scout-canvas:place") || "null");
     return p && typeof p.session === "string" && Number.isFinite(p.sx) && Number.isFinite(p.sy) && p.k > 0 ? p : null;
   } catch { return null; }
 }

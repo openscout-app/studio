@@ -6,7 +6,7 @@ import { handle } from "./server/api.mjs";
 export default defineConfig({
   plugins: [
     react(),
-    { name: "scout-canvas-api", configureServer(server) { server.middlewares.use(async (req, res, next) => { if (!(await handle(req, res))) next(); }); } },
+    { name: "scout-studio-api", configureServer(server) { server.middlewares.use(async (req, res, next) => { if (!(await handle(req, res))) next(); }); } },
   ],
   server: { port: 4801, strictPort: true, host: "127.0.0.1" },
 });

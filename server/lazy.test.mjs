@@ -6,8 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 
-const home = fs.mkdtempSync(path.join(os.tmpdir(), "scout-canvas-test-"));
-process.env.SCOUT_CANVAS_HOME = home;
+const home = fs.mkdtempSync(path.join(os.tmpdir(), "scout-studio-test-"));
+process.env.SCOUT_STUDIO_HOME = home;
 const { readTranscript, screensOf, materialize } = await import("./transcripts.mjs");
 test.after(() => fs.rmSync(home, { recursive: true, force: true }));
 

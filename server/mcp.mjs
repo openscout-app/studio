@@ -1,4 +1,4 @@
-// Scout Canvas as an MCP server, for the Claude Code session it runs under. Claude Code starts it
+// Scout Studio as an MCP server, for the Claude Code session it runs under. Claude Code starts it
 // with the session's id in CLAUDE_CODE_SESSION_ID, so every tool speaks for exactly that session.
 //
 // Tools:
@@ -16,12 +16,12 @@ const VERSION = "0.1.0";
 const TOOLS = [
   {
     name: "screens",
-    description: "List the screenshots this session has taken, newest first, as Scout Canvas shows them to the person. Each has an id to pass to `point`, its size in pixels, the page or file it shows, and what you said around it.",
+    description: "List the screenshots this session has taken, newest first, as Scout Studio shows them to the person. Each has an id to pass to `point`, its size in pixels, the page or file it shows, and what you said around it.",
     inputSchema: { type: "object", properties: { limit: { type: "number", description: "How many, newest first. Default 12." } } },
   },
   {
     name: "point",
-    description: "Show the person one spot or area on a screenshot you took, with what you want to say about it. Returns a short link to give them; it opens Scout Canvas on that screen with the spot marked and your words beside it, and they can reply there. Their reply comes back to this session as a message. Give x and y in pixels of the screenshot as you saw it (or unit \"fraction\"); add w and h to mark an area instead of a point.",
+    description: "Show the person one spot or area on a screenshot you took, with what you want to say about it. Returns a short link to give them; it opens Scout Studio on that screen with the spot marked and your words beside it, and they can reply there. Their reply comes back to this session as a message. Give x and y in pixels of the screenshot as you saw it (or unit \"fraction\"); add w and h to mark an area instead of a point.",
     inputSchema: {
       type: "object",
       required: ["x", "y", "say"],
@@ -101,8 +101,8 @@ export function serveMcp() {
         return out({ id: m.id, result: {
           protocolVersion: m.params?.protocolVersion || "2025-06-18",
           capabilities: { tools: {} },
-          serverInfo: { name: "scout-canvas", version: VERSION },
-          instructions: "Scout Canvas shows the person the screenshots this session took. To show them something precise, call `point` with the spot and what to say, and give them the link it returns, instead of describing where to look.",
+          serverInfo: { name: "scout-studio", version: VERSION },
+          instructions: "Scout Studio shows the person the screenshots this session took. To show them something precise, call `point` with the spot and what to say, and give them the link it returns, instead of describing where to look.",
         } });
       }
       if (m.method === "ping") return out({ id: m.id, result: {} });

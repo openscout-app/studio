@@ -1,17 +1,17 @@
 {
-  "name": "@openscout/canvas",
+  "name": "@openscout/studio",
   "version": "0.1.0",
   "description": "What your agents make, on Scout's canvas. Pin a note on a screen and Scout takes it to the session that made it.",
   "license": "Apache-2.0",
   "homepage": "https://openscout.app",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openscout-app/scout-canvas.git"
+    "url": "git+https://github.com/openscout-app/studio.git"
   },
-  "bugs": "https://github.com/openscout-app/scout-canvas/issues",
+  "bugs": "https://github.com/openscout-app/studio/issues",
   "type": "module",
   "bin": {
-    "scout-canvas": "bin/scout-canvas.mjs"
+    "scout-studio": "bin/scout-studio.mjs"
   },
   "files": [
     "bin",
@@ -29,7 +29,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "start": "node bin/scout-canvas.mjs",
+    "start": "node bin/scout-studio.mjs",
     "test": "node --test server/*.test.mjs",
     "prepare": "vite build"
   },

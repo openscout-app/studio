@@ -7,10 +7,10 @@ import { layout, type Area } from "./scene";
 import { readPlace } from "./place";
 import { NO_VIEW, START_HOURS, ViewControls, wider, type Filter, type View } from "./Controls";
 
-const SETUP = "npx github:openscout-app/scout-canvas setup";
+const SETUP = "npx github:openscout-app/studio setup";
 
 function readView(): View {
-  try { return { ...NO_VIEW, ...JSON.parse(localStorage.getItem("scout-canvas:view") || "{}") }; } catch { return NO_VIEW; }
+  try { return { ...NO_VIEW, ...JSON.parse(localStorage.getItem("scout-studio:view") || localStorage.getItem("scout-canvas:view") || "{}") }; } catch { return NO_VIEW; }
 }
 /** What's open: a session, maybe one of its screens, and a point a right-click or a pointer gave. */
 type Open = { session: string; hash?: string; at?: { x: number; y: number }; pointer?: Pointer };
@@ -36,7 +36,7 @@ export function App() {
   const [filter, setFilter] = useState<Filter>("all");
   // which projects and agents show, kept between visits
   const [view, setView] = useState<View>(readView);
-  useEffect(() => { try { localStorage.setItem("scout-canvas:view", JSON.stringify(view)); } catch {} }, [view]);
+  useEffect(() => { try { localStorage.setItem("scout-studio:view", JSON.stringify(view)); } catch {} }, [view]);
   const viewing = view.hiddenProjects.length > 0 || view.hiddenSessions.length > 0 || view.agents !== "all";
   // "/" goes to the search, as on Scout
   const find = useRef<HTMLInputElement>(null);
@@ -62,7 +62,7 @@ export function App() {
       setOpen({ session: p.session, hash: p.screen.hash, pointer: p });
       setLinked(p.session);
       api.seen(id).catch(() => {});
-    }, () => setMissing("That link points at something Scout Canvas doesn't have. It may come from another Mac."));
+    }, () => setMissing("That link points at something Scout Studio doesn't have. It may come from another Mac."));
   }, []);
 
   const loadNotes = useCallback(() => api.notes().then(setNotes, () => {}), []);
@@ -175,7 +175,7 @@ export function App() {
     <div className="app">
       <header className="bar">
         <div className="bar-side">
-          <a className="brand" href="/" aria-label="Scout Canvas">
+          <a className="brand" href="/" aria-label="Scout Studio">
             <span className="lockup" role="img" aria-label="Scout" />
             <span className="product">Canvas</span>
           </a>

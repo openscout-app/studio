@@ -1,18 +1,22 @@
-// Where Scout Canvas keeps its own things: the screens it lifted out of transcripts, and notes.
+// Where Scout Studio keeps its own things: the screens it lifted out of transcripts, and notes.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 
-export const HOME = process.env.SCOUT_CANVAS_HOME || path.join(os.homedir(), ".scout-canvas");
+// Scout Studio was Scout Canvas until 2026-11-22. A host that only has the old folder keeps using it.
+const NEW_HOME = path.join(os.homedir(), ".scout-studio");
+const OLD_HOME = path.join(os.homedir(), ".scout-canvas");
+export const HOME = process.env.SCOUT_STUDIO_HOME || process.env.SCOUT_CANVAS_HOME ||
+  (!fs.existsSync(NEW_HOME) && fs.existsSync(OLD_HOME) ? OLD_HOME : NEW_HOME);
 export const IMG = path.join(HOME, "img");
 export const NOTES = path.join(HOME, "notes.json");
-export const CLAUDE_PROJECTS = process.env.SCOUT_CANVAS_CLAUDE_PROJECTS || path.join(os.homedir(), ".claude", "projects");
+export const CLAUDE_PROJECTS = process.env.SCOUT_STUDIO_CLAUDE_PROJECTS || process.env.SCOUT_CANVAS_CLAUDE_PROJECTS || path.join(os.homedir(), ".claude", "projects");
 export const RUNTIME = process.env.SCOUT_RUNTIME_URL || "http://127.0.0.1:43110";
 export const POINTERS = path.join(HOME, "pointers.json");
 
 /** The scout command (Scout's CLI, @openscout/scout). A Scout you installed yourself comes first, on
- * PATH or where Bun puts global packages; else the one Scout Canvas depends on. */
+ * PATH or where Bun puts global packages; else the one Scout Studio depends on. */
 export function findScout() {
   if (process.env.SCOUT_BIN) return process.env.SCOUT_BIN;
   return onPath("scout") || bundledScout();
