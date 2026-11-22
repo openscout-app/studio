@@ -10,7 +10,7 @@ Each repository is a frame, each Claude Code session is an area, and the screens
 npx github:openscout-app/scout-canvas
 ```
 
-That's all. It fetches Scout Canvas from this repository, builds it, and opens http://localhost:4801. `bunx github:openscout-app/scout-canvas` works too. Add `--no-open` to skip the browser, or `--port <n>` for another port. If Scout Canvas is already running, the command opens it. If something else holds the port, it takes the next free one.
+That's all. It fetches Scout Canvas from this repository, builds it, and opens http://localhost:4801. Add `--no-open` to skip the browser, or `--port <n>` for another port. If Scout Canvas is already running, the command opens it. If something else holds the port, it takes the next free one.
 
 To send notes into your sessions, and to give agents the Scout Canvas tools, set up once:
 
