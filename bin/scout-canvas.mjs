@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// npx @openscout/canvas [--port 4801] [--no-open]     start Scout Canvas and open it
-// npx @openscout/canvas setup                          install and start Scout, give Claude Code the tools
-// npx @openscout/canvas mcp                            the tools themselves (Claude Code runs this)
-// npx @openscout/canvas link --at x,y --say "…"        point the person at a spot, from a shell
+// npx github:openscout-app/scout-canvas [--port 4801] [--no-open]     start Scout Canvas and open it
+// npx github:openscout-app/scout-canvas setup        start Scout, give Claude Code the tools (or: init)
+// npx github:openscout-app/scout-canvas mcp                            the tools themselves (Claude Code runs this)
+// npx github:openscout-app/scout-canvas link --at x,y --say "…"        point the person at a spot, from a shell
 //
 // Starting: if Scout Canvas already runs on the port, it opens that one; if something else holds
 // the port, it takes the next free one.
@@ -15,13 +15,15 @@ import { fileURLToPath } from "node:url";
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const BIN = fileURLToPath(import.meta.url);
+// how people run it: straight from the open repository on GitHub
+const SPEC = "github:openscout-app/scout-canvas";
 const HELP = `Usage:
   scout-canvas [--port <n>] [--no-open]
       Show what your Claude Code sessions made, on Scout's canvas, at http://localhost:4801.
 
   scout-canvas setup [--print] [--no-scout]
-      Install Scout if it's missing (bun add -g @openscout/scout) and start its runtime
-      (scout setup), which carries notes to your sessions. Then give every Claude Code session
+      Start Scout's runtime if it isn't up (scout setup; Scout comes with Scout Canvas, and its
+      runtime runs on Bun), which carries notes to your sessions. Then give every Claude Code session
       the Scout Canvas tools (screens, point, pointers), so an agent can show you a precise spot
       on a screen it took. --print shows the tools command instead; --no-scout leaves Scout alone.
 
@@ -34,30 +36,23 @@ const HELP = `Usage:
 if (args.includes("--help") || args.includes("-h")) { console.log(HELP); process.exit(0); }
 const fail = (m) => { console.error(`scout-canvas: ${m}`); process.exit(1); };
 
-/** Scout carries notes into sessions: install it if it's missing, and start its runtime if it isn't up. */
+/** Scout carries notes into sessions. Scout Canvas brings its CLI; its runtime runs on Bun. Start it if
+ * it isn't up. */
 async function setupScout() {
-  const { findScout, RUNTIME } = await import("../server/paths.mjs");
-  let scout = findScout();
-  if (!scout) {
-    const bun = [process.env.BUN_INSTALL && path.join(process.env.BUN_INSTALL, "bin", "bun"), path.join(os.homedir(), ".bun", "bin", "bun"),
-      ...(process.env.PATH || "").split(":").filter(Boolean).map((d) => path.join(d, "bun"))].find((p) => p && fs.existsSync(p));
-    if (!bun) {
-      console.log("Scout carries notes to your sessions, and it installs with Bun, which isn't on this Mac.\n" +
-        "Install Bun (https://bun.sh), then run this again. The canvas works without Scout; notes wait for it.\n");
-      return;
-    }
-    console.log("Installing Scout: bun add -g @openscout/scout");
-    try { execFileSync(bun, ["add", "-g", "@openscout/scout"], { stdio: "inherit" }); } catch {
-      console.log("Scout didn't install. See https://openscout.app/install.md, then run this again.\n");
-      return;
-    }
-    scout = findScout();
-    if (!scout) { console.log("Scout installed, but its scout command isn't where Bun puts it. Open a new terminal and run this again.\n"); return; }
-  }
+  const { findScout, findBun, RUNTIME } = await import("../server/paths.mjs");
   const up = await fetch(`${RUNTIME}/v1/tail/discover`, { signal: AbortSignal.timeout(3e3) }).then((r) => r.ok, () => false);
   if (up) { console.log("Scout is up."); return; }
-  console.log("Starting Scout's runtime: scout setup");
-  try { execFileSync(scout, ["setup"], { stdio: "inherit" }); console.log(""); } catch {
+  const bun = findBun(), scout = findScout();
+  if (!bun) {
+    console.log("Scout carries notes to your sessions. Its runtime runs on Bun, which isn't on this Mac.\n" +
+      "Install Bun (curl -fsSL https://bun.sh/install | bash), then run this again.\n" +
+      "The canvas works meanwhile; notes wait for Scout.\n");
+    return;
+  }
+  if (!scout) { console.log("Scout's CLI didn't come with Scout Canvas. Reinstall, or see https://openscout.app/install.md.\n"); return; }
+  console.log("Starting Scout: scout setup");
+  const env = { ...process.env, PATH: `${path.dirname(bun)}:${process.env.PATH || ""}` };
+  try { execFileSync(scout, ["setup"], { stdio: "inherit", env }); console.log(""); } catch {
     console.log("scout setup didn't finish. Run scout doctor to see why. The canvas works meanwhile; notes wait for Scout.\n");
   }
 }
@@ -65,10 +60,10 @@ async function setupScout() {
 if (args[0] === "mcp") {
   const { serveMcp } = await import("../server/mcp.mjs");
   serveMcp();
-} else if (args[0] === "setup") {
+} else if (args[0] === "setup" || args[0] === "init") {
   // from npx the package sits in a cache that can go away, so name the package, not the path
   const viaNpx = BIN.includes(`${path.sep}_npx${path.sep}`);
-  const run = viaNpx ? ["npx", "-y", "@openscout/canvas", "mcp"] : [process.execPath, BIN, "mcp"];
+  const run = viaNpx ? ["npx", "-y", SPEC, "mcp"] : [process.execPath, BIN, "mcp"];
   const add = ["mcp", "add", "--scope", "user", "scout-canvas", "--", ...run];
   const shown = `claude ${add.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ")}`;
   if (args.includes("--print")) { console.log(shown); process.exit(0); }

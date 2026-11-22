@@ -26,15 +26,15 @@
   "os": [
     "darwin"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "start": "node bin/scout-canvas.mjs",
     "test": "node --test server/*.test.mjs",
-    "prepack": "npm run build"
+    "prepare": "vite build"
+  },
+  "dependencies": {
+    "@openscout/scout": "^0.5.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

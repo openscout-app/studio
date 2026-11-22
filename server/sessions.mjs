@@ -4,17 +4,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { CLAUDE_PROJECTS, RUNTIME, findScout } from "./paths.mjs";
+import { CLAUDE_PROJECTS, RUNTIME } from "./paths.mjs";
 import { readTranscript, screensOf, stateOf as parsed } from "./transcripts.mjs";
 
 /** a session that wrote in the last this-long is working, unless it said it was done */
 const WORKING_MS = 90e3;
 
 // ---- Scout's view of sessions: titles and attention, from the runtime's discovery
-let discovery = { at: 0, up: false, installed: false, byId: new Map() };
+let discovery = { at: 0, up: false, byId: new Map() };
 async function discover() {
   if (Date.now() - discovery.at < 15e3) return discovery;
-  const next = { at: Date.now(), up: false, installed: !!findScout(), byId: new Map() };
+  const next = { at: Date.now(), up: false, byId: new Map() };
   try {
     const res = await fetch(`${RUNTIME}/v1/tail/discover`, { signal: AbortSignal.timeout(5e3) });
     if (res.ok) {
@@ -175,7 +175,7 @@ export async function canvas(hours = 72) {
   list.sort((a, b) => b.sessions[0].lastAt - a.sessions[0].lastAt);
   const sessions = new Set(l.files.map((t) => t.session)).size;
   return {
-    at: Date.now(), hours, scout: { up: disc.up, installed: disc.installed || disc.up }, projects: list,
+    at: Date.now(), hours, scout: { up: disc.up }, projects: list,
     // how far the read has come, by bytes, so a bar moves evenly
     loading: { done: l.done, first: l.first, read, total, sessions },
   };

@@ -6,21 +6,21 @@ Each repository is a frame, each Claude Code session is an area, and the screens
 
 ## Run it
 
-You need macOS, Node 20 or newer, and Claude Code. Notes go to your sessions through [Scout](https://github.com/openscout-app/scout)'s runtime, which installs with [Bun](https://bun.sh). Set both up with one command:
-
 ```sh
-npx @openscout/canvas setup
+npx github:openscout-app/scout-canvas
 ```
 
-It installs Scout if it's missing (`bun add -g @openscout/scout`), starts its runtime (`scout setup`), and gives Claude Code the Scout Canvas tools (see [Let agents point you at a screen](#let-agents-point-you-at-a-screen)). Then open the canvas:
+That's all. It fetches Scout Canvas from this repository, builds it, and opens http://localhost:4801. `bunx github:openscout-app/scout-canvas` works too. Add `--no-open` to skip the browser, or `--port <n>` for another port. If Scout Canvas is already running, the command opens it. If something else holds the port, it takes the next free one.
+
+To send notes into your sessions, and to give agents the Scout Canvas tools, set up once:
 
 ```sh
-npx @openscout/canvas
+npx github:openscout-app/scout-canvas setup
 ```
 
-Without Scout, the canvas still shows every session and screen. Notes are kept and wait until Scout is up. Scout Canvas uses only Scout's open runtime and CLI, not the Scout apps.
+Scout Canvas depends on [Scout](https://github.com/openscout-app/scout) (`@openscout/scout`) and brings its CLI along. `setup` starts Scout's runtime if it isn't up (`scout setup`), then registers the tools with Claude Code (see [Let agents point you at a screen](#let-agents-point-you-at-a-screen)). Scout's runtime runs on [Bun](https://bun.sh) 1.4.4 or newer; if Bun is missing, `setup` says how to get it. A Scout you installed yourself is used first.
 
-It opens http://localhost:4801. Add `--no-open` to skip the browser, or `--port <n>` for another port. If Scout Canvas is already running, the command opens it. If something else holds the port, it takes the next free one.
+You need macOS, Node 20 or newer, and Claude Code. Without Scout's runtime, the canvas still shows every session and screen; notes are kept and wait until Scout is up.
 
 From a clone:
 
@@ -69,7 +69,7 @@ An agent can show you one spot or area on a screenshot it took, with what it wan
 Set it up once:
 
 ```sh
-npx @openscout/canvas setup
+npx github:openscout-app/scout-canvas setup
 ```
 
 This gives every new Claude Code session three tools. The session already knows which session it is (Claude Code passes `CLAUDE_CODE_SESSION_ID` to its tools), so the agent never names one.
@@ -87,20 +87,13 @@ A pointer keeps its screen as it was. The link opens the same screen at the same
 From a shell instead of a tool, an agent can run:
 
 ```sh
-npx @openscout/canvas link --box 70,82,1000,80 --say "This header is the session you were on"
-npx @openscout/canvas link --screen 7d89a329b6abd2ce --at 640,380 --say "…"
+npx github:openscout-app/scout-canvas link --box 70,82,1000,80 --say "This header is the session you were on"
+npx github:openscout-app/scout-canvas link --screen 7d89a329b6abd2ce --at 640,380 --say "…"
 ```
 
 Coordinates are pixels of the screenshot. Add `--fraction` to give them as 0 to 1. `setup --print` shows the registration command instead of running it.
 
 Scout Canvas also remembers where you were. When you open it again, the session you were looking at sits where you left it.
-
-## Publish
-
-```sh
-npm login
-npm publish        # builds the app first (prepack), then publishes @openscout/canvas
-```
 
 ## Checks
 

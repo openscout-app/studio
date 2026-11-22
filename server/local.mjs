@@ -27,7 +27,7 @@ export async function ensure() {
   const child = spawn(process.execPath, [BIN, "--no-open"], { detached: true, stdio: "ignore" });
   child.unref();
   for (let i = 0; i < 40 && !port; i++) { await new Promise((r) => setTimeout(r, 250)); port = await running(); }
-  if (!port) throw new Error("Scout Canvas didn't start. Run `npx @openscout/canvas` to see why.");
+  if (!port) throw new Error("Scout Canvas didn't start. Run `npx github:openscout-app/scout-canvas` to see why.");
   return `http://localhost:${port}`;
 }
 
