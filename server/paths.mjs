@@ -4,11 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 
-// Scout Studio was Scout Canvas until 2026-11-22. A host that only has the old folder keeps using it.
-const NEW_HOME = path.join(os.homedir(), ".scout-studio");
-const OLD_HOME = path.join(os.homedir(), ".scout-canvas");
+// Scout's tools keep their things in Scout's folder, as a dot folder named for the tool:
+// ~/.openscout/.studio (or $OPENSCOUT_HOME/.studio). Until 2026-11-22 Studio used ~/.scout-studio, and
+// before that, as Scout Canvas, ~/.scout-canvas; a host that only has an old folder keeps using it.
+const NEW_HOME = path.join(process.env.OPENSCOUT_HOME || path.join(os.homedir(), ".openscout"), ".studio");
+const OLD_HOMES = [".scout-studio", ".scout-canvas"].map((d) => path.join(os.homedir(), d));
 export const HOME = process.env.SCOUT_STUDIO_HOME || process.env.SCOUT_CANVAS_HOME ||
-  (!fs.existsSync(NEW_HOME) && fs.existsSync(OLD_HOME) ? OLD_HOME : NEW_HOME);
+  (fs.existsSync(NEW_HOME) ? NEW_HOME : OLD_HOMES.find((d) => fs.existsSync(d)) || NEW_HOME);
 export const IMG = path.join(HOME, "img");
 export const NOTES = path.join(HOME, "notes.json");
 export const CLAUDE_PROJECTS = process.env.SCOUT_STUDIO_CLAUDE_PROJECTS || process.env.SCOUT_CANVAS_CLAUDE_PROJECTS || path.join(os.homedir(), ".claude", "projects");

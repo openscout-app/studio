@@ -53,7 +53,7 @@ export async function showsFor(roots) {
   const out = [];
   await Promise.all([...new Set(roots.filter(Boolean))].map(async (root) => {
     const hit = listed.get(root);
-    if (hit && Date.now() - hit.at < 8e3) return out.push(...hit.shows);
+    if (hit && Date.now() - hit.at < (following.has(root) ? 300e3 : 8e3)) return out.push(...hit.shows);
     let shows = [];
     try { shows = (await (await get(`/v1/shows?projectRoot=${encodeURIComponent(root)}`)).json()).shows || []; } catch {}
     listed.set(root, { at: Date.now(), shows });

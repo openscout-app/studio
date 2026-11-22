@@ -40,7 +40,7 @@ You need:
 
 ## Where screens come from
 
-The canvas reads Claude Code transcripts in `~/.claude/projects` written in the chosen window: 4 hours, 24 hours or 3 days. It opens on the last 4 hours and looks further back on its own when that holds no screens; a link to an older session widens it as far as it needs, up to a week. A screen is any image of at least 320 by 200 that a tool returned: a browser screenshot, a window screenshot, or an image file the session read. Subagents' screens belong to the session that started them. The images are copied out of the transcripts into `~/.scout-studio/img`, so they outlive temporary files.
+The canvas reads Claude Code transcripts in `~/.claude/projects` written in the chosen window: 4 hours, 24 hours or 3 days. It opens on the last 4 hours and looks further back on its own when that holds no screens; a link to an older session widens it as far as it needs, up to a week. A screen is any image of at least 320 by 200 that a tool returned: a browser screenshot, a window screenshot, or an image file the session read. Subagents' screens belong to the session that started them. The images are copied out of the transcripts into `~/.openscout/.studio/img`, so they outlive temporary files.
 
 ## Shown files, from Scout's runtime
 
@@ -52,7 +52,7 @@ Studio finds the runtime the way Scout's own tools do: `SCOUT_RUNTIME_URL` or `O
 
 The page doesn't poll. It opens an event stream (`/api/events`), and the server pushes the canvas when something on it changes: a transcript grows (macOS file events on `~/.claude/projects`), the runtime shows a file (its `/v1/shows/events` stream), or the first read moves along. While agents write, pushes come at most about once a second. If the stream drops, the page polls until it reconnects.
 
-Opening is immediate. The server keeps the last whole canvas for each window in `~/.scout-studio/canvas-<hours>h.json`. A server that has just started answers with that at once and corrects it as it reads the transcripts again; a session keeps its earlier copy until its transcript has been read to the end, so no card goes away and comes back. On the first run there is no snapshot yet, and the canvas fills in session by session as they are read.
+Opening is immediate. The server keeps the last whole canvas for each window in `~/.openscout/.studio/canvas-<hours>h.json`. A server that has just started answers with that at once and corrects it as it reads the transcripts again; a session keeps its earlier copy until its transcript has been read to the end, so no card goes away and comes back. On the first run there is no snapshot yet, and the canvas fills in session by session as they are read.
 
 ## Before and after
 
@@ -72,7 +72,7 @@ A note goes out at once when its session is open. A closed session's note waits,
 
 The message carries a marker (`[scout-studio:n_…]`). The canvas finds the marker in the session's transcript, which shows that the note arrived, and it shows what the session said after it.
 
-Notes are kept in `~/.scout-studio/notes.json` (`SCOUT_STUDIO_HOME` moves the folder). The server listens on 127.0.0.1 only and refuses requests from other sites, so no web page can send notes into your sessions.
+Notes are kept in `~/.openscout/.studio/notes.json` (`SCOUT_STUDIO_HOME` moves the folder; with `OPENSCOUT_HOME` set, it is `$OPENSCOUT_HOME/.studio`). A host that still has `~/.scout-studio` or `~/.scout-canvas` from before keeps using it until the new folder exists. The server listens on 127.0.0.1 only and refuses requests from other sites, so no web page can send notes into your sessions.
 
 ## Let agents point you at a screen
 
@@ -94,7 +94,7 @@ This gives every new Claude Code session three tools. The session already knows 
 
 If Scout Studio isn't running, the first tool call starts it in the background.
 
-A pointer keeps its screen as it was. The link opens the same screen at the same spot, even after the session takes more screens or the canvas folds screens of the same page together. Pointers are kept in `~/.scout-studio/pointers.json`.
+A pointer keeps its screen as it was. The link opens the same screen at the same spot, even after the session takes more screens or the canvas folds screens of the same page together. Pointers are kept in `~/.openscout/.studio/pointers.json`.
 
 From a shell instead of a tool, an agent can run:
 

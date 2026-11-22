@@ -13,6 +13,7 @@ const WORKING_MS = 90e3;
 
 // ---- Scout's view of sessions: titles and attention, from the runtime's discovery
 let discovery = { at: 0, up: false, byId: new Map() };
+const FOLLOW = 24; // repositories followed for shows; the runtime allows 32 event streams in all
 async function discover() {
   if (Date.now() - discovery.at < 15e3) return discovery;
   const next = { at: Date.now(), up: false, byId: new Map() };
@@ -147,7 +148,14 @@ export async function canvas(hours = 4) {
   }
   // what agents showed on purpose, from the runtime, for every repository a session in the window
   // worked in; each show goes to the session that made it
-  const roots = [...bySession.values()].map((rec) => { const s = rec.own || rec.parts[0]; return s?.cwd ? repoOf(s.cwd).root : ""; });
+  // the repositories to ask the runtime about: those of Claude's transcripts here, and those of every
+  // session the runtime sees at work in the window (Codex, relayed asks), most recent first
+  const seen = new Map();
+  for (const rec of bySession.values()) { const s = rec.own || rec.parts[0]; if (s?.cwd) seen.set(s.cwd, Math.max(seen.get(s.cwd) || 0, s.lastAt || 0)); }
+  for (const t of disc.byId.values()) if (t.cwd && (t.lastEventAt || 0) >= since) seen.set(t.cwd, Math.max(seen.get(t.cwd) || 0, t.lastEventAt));
+  const latestFor = new Map();
+  for (const [cwd, at] of seen) { const r = repoOf(cwd).root; if (r) latestFor.set(r, Math.max(latestFor.get(r) || 0, at)); }
+  const roots = [...latestFor].sort((a, b) => b[1] - a[1]).map(([r]) => r).slice(0, FOLLOW);
   const shows = disc.up ? (await showsFor(roots)).filter((sh) => sh.at >= since) : [];
   if (disc.up) watchShows(roots);
   const showsBy = new Map();
@@ -231,7 +239,7 @@ let savedAt = new Map();
 function keepSnapshot(hours, out) {
   if (Date.now() - (savedAt.get(hours) || 0) < 30e3) return;
   savedAt.set(hours, Date.now());
-  fs.writeFile(snapFile(hours), JSON.stringify({ at: out.at, projects: out.projects }), () => {});
+  fs.mkdir(HOME, { recursive: true }, () => fs.writeFile(snapFile(hours), JSON.stringify({ at: out.at, projects: out.projects }), () => {}));
 }
 /** The fresh read wins for each session once it has read that session to the end; until then the
  * snapshot's copy stays, so a card never goes away and comes back while the read catches up. */
