@@ -35,7 +35,8 @@ export function Arrival({ data, error, hours, filtered, ready, returning, landed
   // how many steps have checked off; each waits for the one before and for its own condition
   const [checked, setChecked] = useState(0);
   const list = steps(data, hours, ready, returning, landedOn);
-  const arrived = checked >= list.length;
+  // a canvas to land on ends the sequence at once: the page shows what it has and fills in from there
+  const arrived = checked >= list.length || ready;
   // the sequence plays once, on the way in; switching the window later goes straight to the canvas
   const ripe = !arrived && list[checked].done;
   useEffect(() => {

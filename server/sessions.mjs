@@ -4,8 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { CLAUDE_PROJECTS } from "./paths.mjs";
-import { runtimeUrl, showsFor } from "./runtime.mjs";
+import { CLAUDE_PROJECTS, HOME } from "./paths.mjs";
+import { runtimeUrl, showsFor, watchShows } from "./runtime.mjs";
 import { readTranscript, screensOf, stateOf as parsed } from "./transcripts.mjs";
 
 /** a session that wrote in the last this-long is working, unless it said it was done */
@@ -133,11 +133,13 @@ export async function canvas(hours = 4) {
   const [disc, open] = [await discover(), openSessions()];
   const bySession = new Map();
   let read = 0, total = 0;
+  const partial = new Set(); // sessions with a transcript not yet read to its end
   for (const t of l.files) {
     const s = parsed(t.file);
     const from = l.start.get(t.file) || 0;
     total += Math.max(0, t.size - from);
     read += s ? Math.max(0, Math.min(s.offset, t.size) - from) : 0;
+    if (!s || s.offset < t.size) partial.add(t.session);
     if (!s) continue;
     let rec = bySession.get(t.session);
     if (!rec) bySession.set(t.session, (rec = { id: t.session, own: null, parts: [] }));
@@ -147,6 +149,7 @@ export async function canvas(hours = 4) {
   // worked in; each show goes to the session that made it
   const roots = [...bySession.values()].map((rec) => { const s = rec.own || rec.parts[0]; return s?.cwd ? repoOf(s.cwd).root : ""; });
   const shows = disc.up ? (await showsFor(roots)).filter((sh) => sh.at >= since) : [];
+  if (disc.up) watchShows(roots);
   const showsBy = new Map();
   for (const sh of shows) showsBy.set(sh.sessionId, [...(showsBy.get(sh.sessionId) || []), sh]);
   const projects = new Map();
@@ -197,11 +200,68 @@ export async function canvas(hours = 4) {
   for (const p of list) p.sessions.sort((a, b) => b.lastAt - a.lastAt);
   list.sort((a, b) => b.sessions[0].lastAt - a.sessions[0].lastAt);
   const sessions = new Set(l.files.map((t) => t.session)).size;
-  return {
+  const out = {
     at: Date.now(), hours, scout: { up: disc.up, url: runtimeUrl(), shows: shows.length }, projects: list,
     // how far the read has come, by bytes, so a bar moves evenly
     loading: { done: l.done, first: l.first, read, total, sessions },
   };
+  if (l.done) { completed.add(hours); keepSnapshot(hours, out); }
+  // until this server has read the window once, fill in from what it drew last time, so the page has
+  // the whole canvas at once and the fresh read only corrects it
+  else if (!completed.has(hours)) out.projects = merge(snapshot(hours, since), list, partial);
+  return out;
+}
+
+// ---- the last whole canvas for each window, kept on disk for a cold start
+const completed = new Set();
+const snapFile = (hours) => path.join(HOME, `canvas-${hours}h.json`);
+const snapshots = new Map();
+function snapshot(hours, since) {
+  if (!snapshots.has(hours)) {
+    let projects = [];
+    try { projects = JSON.parse(fs.readFileSync(snapFile(hours), "utf8")).projects || []; } catch {}
+    snapshots.set(hours, projects);
+  }
+  // as it was then, less what has since left the window; nothing in it is at work now
+  return snapshots.get(hours)
+    .map((p) => ({ ...p, sessions: p.sessions.filter((s) => s.lastAt >= since).map((s) => ({ ...s, working: false, shows: s.shows || [] })) }))
+    .filter((p) => p.sessions.length);
+}
+let savedAt = new Map();
+function keepSnapshot(hours, out) {
+  if (Date.now() - (savedAt.get(hours) || 0) < 30e3) return;
+  savedAt.set(hours, Date.now());
+  fs.writeFile(snapFile(hours), JSON.stringify({ at: out.at, projects: out.projects }), () => {});
+}
+/** The fresh read wins for each session once it has read that session to the end; until then the
+ * snapshot's copy stays, so a card never goes away and comes back while the read catches up. */
+function merge(old, fresh, partial) {
+  const projects = new Map(old.map((p) => [p.root, { ...p, sessions: [...p.sessions] }]));
+  for (const p of fresh) {
+    const o = projects.get(p.root);
+    if (!o) { projects.set(p.root, p); continue; }
+    const had = new Map(o.sessions.map((s) => [s.id, s]));
+    const take = p.sessions.filter((s) => !(partial.has(s.id) && had.has(s.id)));
+    const ids = new Set(take.map((s) => s.id));
+    o.sessions = [...take, ...o.sessions.filter((s) => !ids.has(s.id))].sort((a, b) => b.lastAt - a.lastAt);
+  }
+  return [...projects.values()].sort((a, b) => b.sessions[0].lastAt - a.sessions[0].lastAt);
+}
+
+/** A transcript changed on disk: read what it added, and put it in every window being read. */
+export async function touch(file) {
+  const rel = path.relative(CLAUDE_PROJECTS, file).split(path.sep);
+  if (rel.length !== 2 && !(rel.length === 4 && rel[2] === "subagents")) return;
+  const subagent = rel.length === 4;
+  const session = subagent ? rel[1] : rel[1].replace(/\.jsonl$/, "");
+  let st;
+  try { st = fs.statSync(file); } catch { return; }
+  for (const l of loads.values()) {
+    if (l.files.some((t) => t.file === file)) continue;
+    l.files.unshift({ file, session, subagent, mtime: st.mtimeMs, size: st.size });
+    l.start.set(file, 0);
+  }
+  await readTranscript(file, session).catch(() => null);
 }
 
 /** The parse state of a session's own transcript, read up to now, for the answers to notes sent into it. */

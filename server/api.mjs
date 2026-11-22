@@ -11,6 +11,7 @@ import { addNote, handOff, keep, notes, remove, retry, startSweep } from "./note
 import { addPointer, markSeen, pointer, pointersOf, screensOf } from "./pointers.mjs";
 import { showById, showBytes, showsFor, viewOf } from "./runtime.mjs";
 import { viewResponse } from "./show-view.mjs";
+import { events } from "./live.mjs";
 
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
@@ -81,6 +82,10 @@ export async function handle(req, res) {
     return true;
   }
   try {
+    if (p === "/api/events" && req.method === "GET") {
+      const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 4));
+      return await events(req, res, hours), true;
+    }
     if (p === "/api/canvas" && req.method === "GET") {
       const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 4));
       return send(res, 200, await canvas(hours)), true;

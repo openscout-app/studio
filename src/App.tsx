@@ -70,14 +70,25 @@ export function App() {
   const loadNotes = useCallback(() => api.notes().then(setNotes, () => {}), []);
   // ask often while sessions are still being read, then settle to every 15 seconds
   useEffect(() => {
-    let stop = false, timer = 0;
+    // pushed: the server sends the whole canvas when it opens and again each time it changes. If the
+    // stream drops, poll until it is back (EventSource reconnects on its own).
+    let stop = false, timer = 0, live = false;
     setData((d) => (d && d.hours === hours ? d : null));
-    const tick = () => api.canvas(hours).then(
-      (d) => { if (stop) return; setData(d); setError(null); timer = window.setTimeout(tick, d.loading.done ? 15e3 : 450); },
-      (e) => { if (stop) return; setError(String(e.message || e)); timer = window.setTimeout(tick, 5e3); },
+    const poll = () => api.canvas(hours).then(
+      (d) => { if (stop || live) return; setData(d); setError(null); timer = window.setTimeout(poll, d.loading.done ? 15e3 : 450); },
+      (e) => { if (stop || live) return; setError(String(e.message || e)); timer = window.setTimeout(poll, 5e3); },
     );
-    tick();
-    return () => { stop = true; clearTimeout(timer); };
+    let es: EventSource | null = null;
+    if (typeof EventSource === "function") {
+      es = new EventSource(`/api/events?hours=${hours}`);
+      es.addEventListener("canvas", (e) => {
+        if (stop) return;
+        live = true; clearTimeout(timer); timer = 0;
+        setData(JSON.parse((e as MessageEvent).data)); setError(null);
+      });
+      es.onerror = () => { if (stop) return; live = false; if (!timer) timer = window.setTimeout(poll, 2e3); };
+    } else poll();
+    return () => { stop = true; clearTimeout(timer); es?.close(); };
   }, [hours]);
   useEffect(() => { loadNotes(); const t = setInterval(loadNotes, 4e3); return () => clearInterval(t); }, [loadNotes]);
   useEffect(() => {

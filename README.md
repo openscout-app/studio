@@ -44,9 +44,15 @@ The canvas reads Claude Code transcripts in `~/.claude/projects` written in the 
 
 ## Shown files, from Scout's runtime
 
-When Scout's runtime answers on this host, Studio adds what agents chose to show you. An agent runs `scout show <file> --caption "…"` (or calls Scout's `show` tool), and the file appears first in its session's area, marked shown, within about 20 seconds. Click it to read it: Markdown is drawn as a page, an HTML page runs in a sandbox of its own, and pictures, video, PDFs and text open as they are. Showing the same file again makes a new version, and Studio opens the latest.
+When Scout's runtime answers on this host, Studio adds what agents chose to show you. An agent runs `scout show <file> --caption "…"` (or calls Scout's `show` tool), and the file appears first in its session's area, marked shown, within a second. Click it to read it: Markdown is drawn as a page, an HTML page runs in a sandbox of its own, and pictures, video, PDFs and text open as they are. Showing the same file again makes a new version, and Studio opens the latest.
 
 Studio finds the runtime the way Scout's own tools do: `SCOUT_RUNTIME_URL` or `OPENSCOUT_BROKER_URL` if set, else the host and port in `~/.openscout/config.json`, else `127.0.0.1:43110`. It only reads from the runtime; notes still go to sessions through the `scout` command. With no runtime, Studio draws screens from transcripts as before, and the chip in the bar says Scout isn't running.
+
+## Live, and quick to open
+
+The page doesn't poll. It opens an event stream (`/api/events`), and the server pushes the canvas when something on it changes: a transcript grows (macOS file events on `~/.claude/projects`), the runtime shows a file (its `/v1/shows/events` stream), or the first read moves along. While agents write, pushes come at most about once a second. If the stream drops, the page polls until it reconnects.
+
+Opening is immediate. The server keeps the last whole canvas for each window in `~/.scout-studio/canvas-<hours>h.json`. A server that has just started answers with that at once and corrects it as it reads the transcripts again; a session keeps its earlier copy until its transcript has been read to the end, so no card goes away and comes back. On the first run there is no snapshot yet, and the canvas fills in session by session as they are read.
 
 ## Before and after
 

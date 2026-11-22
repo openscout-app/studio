@@ -77,6 +77,40 @@ export async function showsFor(roots) {
 
 export const showById = (id) => known.get(id) || null;
 
+// ---- pushed, not polled: the runtime streams each new show, per repository
+const following = new Map(); // project root -> true while a stream is open or waiting to reopen
+const listeners = new Set();
+/** Call fn whenever the runtime shows a new file in a repository Studio follows. */
+export function onShows(fn) { listeners.add(fn); return () => listeners.delete(fn); }
+/** Follow the runtime's show events for these repositories, once each. */
+export function watchShows(roots) {
+  for (const root of new Set(roots.filter(Boolean))) if (!following.has(root)) { following.set(root, true); follow(root, 0); }
+}
+async function follow(root, failures) {
+  let opened = false;
+  try {
+    const res = await fetch(`${runtimeUrl()}/v1/shows/events?projectRoot=${encodeURIComponent(root)}&since=${Date.now()}`);
+    if (!res.ok || !res.body) throw new Error(String(res.status));
+    opened = true;
+    // anything shown while the stream was closed: list again
+    if (failures) { listed.delete(root); for (const fn of listeners) fn(root); }
+    const text = new TextDecoder();
+    let buf = "";
+    for await (const chunk of res.body) {
+      buf += text.decode(chunk, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        if (/^event: show\.created$/m.test(block)) { listed.delete(root); for (const fn of listeners) fn(root); }
+      }
+    }
+  } catch {}
+  // the runtime ended the stream or isn't answering: try again, less often the longer it stays away
+  const n = opened ? 1 : failures + 1;
+  setTimeout(() => follow(root, n), Math.min(60e3, 2e3 * 2 ** Math.min(n, 5)));
+}
+
 /** A show's bytes, as the runtime keeps them. */
 export async function showBytes(id) {
   const res = await get(`/v1/shows/${encodeURIComponent(id)}/bytes`, 20e3);
