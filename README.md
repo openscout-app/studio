@@ -42,6 +42,12 @@ You need:
 
 The canvas reads Claude Code transcripts in `~/.claude/projects` written in the chosen window: 4 hours, 24 hours or 3 days. It opens on the last 4 hours and looks further back on its own when that holds no screens; a link to an older session widens it as far as it needs, up to a week. A screen is any image of at least 320 by 200 that a tool returned: a browser screenshot, a window screenshot, or an image file the session read. Subagents' screens belong to the session that started them. The images are copied out of the transcripts into `~/.scout-studio/img`, so they outlive temporary files.
 
+## Shown files, from Scout's runtime
+
+When Scout's runtime answers on this host, Studio adds what agents chose to show you. An agent runs `scout show <file> --caption "…"` (or calls Scout's `show` tool), and the file appears first in its session's area, marked shown, within about 20 seconds. Click it to read it: Markdown is drawn as a page, an HTML page runs in a sandbox of its own, and pictures, video, PDFs and text open as they are. Showing the same file again makes a new version, and Studio opens the latest.
+
+Studio finds the runtime the way Scout's own tools do: `SCOUT_RUNTIME_URL` or `OPENSCOUT_BROKER_URL` if set, else the host and port in `~/.openscout/config.json`, else `127.0.0.1:43110`. It only reads from the runtime; notes still go to sessions through the `scout` command. With no runtime, Studio draws screens from transcripts as before, and the chip in the bar says Scout isn't running.
+
 ## Before and after
 
 A screen has a before only when it shows the same thing as an earlier screen in the same session:
