@@ -13,7 +13,7 @@ export type Session = {
 };
 export type Project = { name: string; root: string; sessions: Session[] };
 export type Loading = { done: boolean; first: boolean; read: number; total: number; sessions: number };
-export type CanvasData = { at: number; hours: number; scout: { up: boolean }; projects: Project[]; loading: Loading };
+export type CanvasData = { at: number; hours: number; scout: { up: boolean; installed: boolean }; projects: Project[]; loading: Loading };
 
 export type Step = { what: "waiting" | "failed" | "sent" | "handed"; at: number; why?: string; how?: string | null; task?: string | null };
 export type Note = {

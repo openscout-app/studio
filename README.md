@@ -6,9 +6,19 @@ Each repository is a frame, each Claude Code session is an area, and the screens
 
 ## Run it
 
+You need macOS, Node 20 or newer, and Claude Code. Notes go to your sessions through [Scout](https://github.com/openscout-app/scout)'s runtime, which installs with [Bun](https://bun.sh). Set both up with one command:
+
+```sh
+npx @openscout/canvas setup
+```
+
+It installs Scout if it's missing (`bun add -g @openscout/scout`), starts its runtime (`scout setup`), and gives Claude Code the Scout Canvas tools (see [Let agents point you at a screen](#let-agents-point-you-at-a-screen)). Then open the canvas:
+
 ```sh
 npx @openscout/canvas
 ```
+
+Without Scout, the canvas still shows every session and screen. Notes are kept and wait until Scout is up. Scout Canvas uses only Scout's open runtime and CLI, not the Scout apps.
 
 It opens http://localhost:4801. Add `--no-open` to skip the browser, or `--port <n>` for another port. If Scout Canvas is already running, the command opens it. If something else holds the port, it takes the next free one.
 

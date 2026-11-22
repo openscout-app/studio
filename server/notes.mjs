@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
-import { HOME, IMG, NOTES } from "./paths.mjs";
+import { HOME, IMG, NOTES, findScout } from "./paths.mjs";
 import { isOpen, stateOf } from "./sessions.mjs";
 import { materialize } from "./transcripts.mjs";
 
@@ -46,10 +46,7 @@ function step(n, ev) {
 // ---- the scout command
 let bin = null;
 function scoutBin() {
-  if (bin) return bin;
-  if (process.env.SCOUT_BIN) return (bin = process.env.SCOUT_BIN);
-  try { bin = execFileSync("/usr/bin/which", ["scout"], { encoding: "utf8" }).trim(); } catch {}
-  return bin || "scout";
+  return bin || (bin = findScout()) || "scout";
 }
 function scout(args, timeout = 60e3) {
   return new Promise((resolve) => {

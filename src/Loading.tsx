@@ -12,7 +12,7 @@ function steps(data: CanvasData | null, hours: number, ready: boolean, returning
   return [
     {
       label: "Finding Scout", done: !!data,
-      detail: data ? (data.scout.up ? "Scout is up" : "Scout isn't running. Notes wait until it is.") : undefined,
+      detail: data ? (data.scout.up ? "Scout is up" : data.scout.installed ? "Scout isn't running. Notes wait until it is." : "Scout isn't installed. The canvas works; notes wait for Scout.") : undefined,
       warn: !!data && !data.scout.up,
     },
     {

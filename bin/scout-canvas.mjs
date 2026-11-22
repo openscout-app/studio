@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // npx @openscout/canvas [--port 4801] [--no-open]     start Scout Canvas and open it
-// npx @openscout/canvas setup                          give Claude Code the Scout Canvas tools
+// npx @openscout/canvas setup                          install and start Scout, give Claude Code the tools
 // npx @openscout/canvas mcp                            the tools themselves (Claude Code runs this)
 // npx @openscout/canvas link --at x,y --say "…"        point the person at a spot, from a shell
 //
@@ -8,6 +8,7 @@
 // the port, it takes the next free one.
 import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,9 +19,11 @@ const HELP = `Usage:
   scout-canvas [--port <n>] [--no-open]
       Show what your Claude Code sessions made, on Scout's canvas, at http://localhost:4801.
 
-  scout-canvas setup [--print]
-      Give every Claude Code session the Scout Canvas tools (screens, point, pointers), so an
-      agent can show you a precise spot on a screen it took. --print shows the command instead.
+  scout-canvas setup [--print] [--no-scout]
+      Install Scout if it's missing (bun add -g @openscout/scout) and start its runtime
+      (scout setup), which carries notes to your sessions. Then give every Claude Code session
+      the Scout Canvas tools (screens, point, pointers), so an agent can show you a precise spot
+      on a screen it took. --print shows the tools command instead; --no-scout leaves Scout alone.
 
   scout-canvas mcp
       The tools, as an MCP server over stdio. Claude Code runs this; you don't need to.
@@ -30,6 +33,34 @@ const HELP = `Usage:
       Coordinates are pixels of the screenshot, or 0 to 1 with --fraction.`;
 if (args.includes("--help") || args.includes("-h")) { console.log(HELP); process.exit(0); }
 const fail = (m) => { console.error(`scout-canvas: ${m}`); process.exit(1); };
+
+/** Scout carries notes into sessions: install it if it's missing, and start its runtime if it isn't up. */
+async function setupScout() {
+  const { findScout, RUNTIME } = await import("../server/paths.mjs");
+  let scout = findScout();
+  if (!scout) {
+    const bun = [process.env.BUN_INSTALL && path.join(process.env.BUN_INSTALL, "bin", "bun"), path.join(os.homedir(), ".bun", "bin", "bun"),
+      ...(process.env.PATH || "").split(":").filter(Boolean).map((d) => path.join(d, "bun"))].find((p) => p && fs.existsSync(p));
+    if (!bun) {
+      console.log("Scout carries notes to your sessions, and it installs with Bun, which isn't on this Mac.\n" +
+        "Install Bun (https://bun.sh), then run this again. The canvas works without Scout; notes wait for it.\n");
+      return;
+    }
+    console.log("Installing Scout: bun add -g @openscout/scout");
+    try { execFileSync(bun, ["add", "-g", "@openscout/scout"], { stdio: "inherit" }); } catch {
+      console.log("Scout didn't install. See https://openscout.app/install.md, then run this again.\n");
+      return;
+    }
+    scout = findScout();
+    if (!scout) { console.log("Scout installed, but its scout command isn't where Bun puts it. Open a new terminal and run this again.\n"); return; }
+  }
+  const up = await fetch(`${RUNTIME}/v1/tail/discover`, { signal: AbortSignal.timeout(3e3) }).then((r) => r.ok, () => false);
+  if (up) { console.log("Scout is up."); return; }
+  console.log("Starting Scout's runtime: scout setup");
+  try { execFileSync(scout, ["setup"], { stdio: "inherit" }); console.log(""); } catch {
+    console.log("scout setup didn't finish. Run scout doctor to see why. The canvas works meanwhile; notes wait for Scout.\n");
+  }
+}
 
 if (args[0] === "mcp") {
   const { serveMcp } = await import("../server/mcp.mjs");
@@ -41,6 +72,7 @@ if (args[0] === "mcp") {
   const add = ["mcp", "add", "--scope", "user", "scout-canvas", "--", ...run];
   const shown = `claude ${add.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ")}`;
   if (args.includes("--print")) { console.log(shown); process.exit(0); }
+  if (!args.includes("--no-scout")) await setupScout();
   let has = false;
   try { execFileSync("claude", ["mcp", "get", "scout-canvas"], { stdio: "ignore" }); has = true; } catch (e) {
     if (e.code === "ENOENT") fail(`the claude command isn't on PATH. Run this where it is:\n  ${shown}`);

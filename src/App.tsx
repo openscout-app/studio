@@ -7,6 +7,8 @@ import { layout, type Area } from "./scene";
 import { readPlace } from "./place";
 import { NO_VIEW, ViewControls, type Filter, type View } from "./Controls";
 
+const SCOUT_INSTALL = "https://openscout.app/install.md";
+
 function readView(): View {
   try { return { ...NO_VIEW, ...JSON.parse(localStorage.getItem("scout-canvas:view") || "{}") }; } catch { return NO_VIEW; }
 }
@@ -183,10 +185,16 @@ export function App() {
             </span>
           )}
           {data && <span className="sep" />}
-          <span className="chip" title={data?.scout.up ? "Scout's runtime answers on this Mac; notes go to sessions through it" : "Scout's runtime isn't answering; notes wait until it is"}>
-            <span className={`dot ${data ? (data.scout.up ? "ok" : "bad") : ""}`} />
-            {data ? (data.scout.up ? "Scout is up" : "Scout isn't running") : "Looking for Scout…"}
-          </span>
+          {data && !data.scout.installed ? (
+            <a className="chip" href={SCOUT_INSTALL} target="_blank" rel="noreferrer" title="Notes go to your sessions through Scout. Everything else works without it. Or run: npx @openscout/canvas setup">
+              <span className="dot" />Get Scout to send notes
+            </a>
+          ) : (
+            <span className="chip" title={data?.scout.up ? "Scout's runtime answers on this Mac; notes go to sessions through it" : "Scout's runtime isn't answering; notes wait until it is. Run: scout setup"}>
+              <span className={`dot ${data ? (data.scout.up ? "ok" : "bad") : ""}`} />
+              {data ? (data.scout.up ? "Scout is up" : "Scout isn't running") : "Looking for Scout…"}
+            </span>
+          )}
         </div>
       </header>
       <main className="field">
