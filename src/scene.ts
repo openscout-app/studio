@@ -1,7 +1,7 @@
 // Where everything sits, in world units, on Scout's canvas grid: each repository is a frame, each
 // session an area in it, and an area's screens are cards four across, newest first. Frames fill
 // two columns, the shorter one first.
-import type { CanvasData, Project, Screen, Session } from "./api";
+import type { CanvasData, Project, Screen, Session, Show } from "./api";
 
 export const CARD_W = 232;
 export const MEDIA_H = 145;
@@ -21,7 +21,8 @@ const ORIGIN = 40;
 
 export type Box = { x: number; y: number; w: number; h: number };
 export type Card = { screen: Screen; box: Box };
-export type Area = { session: Session; project: Project; box: Box; cards: Card[]; hidden: number };
+export type ShowCard = { show: Show; box: Box };
+export type Area = { session: Session; project: Project; box: Box; cards: Card[]; shows: ShowCard[]; hidden: number };
 export type Frame = { project: Project; box: Box; areas: Area[] };
 
 export function layout(data: CanvasData, opened: Set<string>, keep: (s: Screen) => boolean = () => true): { frames: Frame[]; bounds: Box } {
@@ -34,15 +35,15 @@ export function layout(data: CanvasData, opened: Set<string>, keep: (s: Screen) 
     const areas: Area[] = [];
     for (const session of project.sessions) {
       const all = session.screens.filter(keep).slice().reverse();
-      if (!all.length) continue;
+      const docs = session.shows || [];
+      if (!all.length && !docs.length) continue;
       const shown = opened.has(session.id) ? all : all.slice(0, SHOWN);
-      const rows = Math.ceil(shown.length / COLS);
-      const cards = shown.map((screen, i) => ({
-        screen,
-        box: { x: x + PAD + (i % COLS) * (CARD_W + GAP), y: y + LABEL_H + Math.floor(i / COLS) * (CARD_H + GAP), w: CARD_W, h: CARD_H },
-      }));
+      const at = (i: number) => ({ x: x + PAD + (i % COLS) * (CARD_W + GAP), y: y + LABEL_H + Math.floor(i / COLS) * (CARD_H + GAP), w: CARD_W, h: CARD_H });
+      const shows = docs.map((show, i) => ({ show, box: at(i) }));
+      const cards = shown.map((screen, i) => ({ screen, box: at(docs.length + i) }));
+      const rows = Math.ceil((docs.length + shown.length) / COLS);
       const h = LABEL_H + rows * CARD_H + (rows - 1) * GAP;
-      areas.push({ session, project, box: { x: x + PAD, y, w: AREA_W, h }, cards, hidden: all.length - shown.length });
+      areas.push({ session, project, box: { x: x + PAD, y, w: AREA_W, h }, cards, shows, hidden: all.length - shown.length });
       y += h + AREA_GAP;
     }
     if (!areas.length) continue;

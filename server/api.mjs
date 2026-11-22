@@ -9,6 +9,8 @@ import { materialize } from "./transcripts.mjs";
 import { canvas } from "./sessions.mjs";
 import { addNote, handOff, keep, notes, remove, retry, startSweep } from "./notes.mjs";
 import { addPointer, markSeen, pointer, pointersOf, screensOf } from "./pointers.mjs";
+import { showById, showBytes, showsFor, viewOf } from "./runtime.mjs";
+import { viewResponse } from "./show-view.mjs";
 
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
@@ -82,6 +84,17 @@ export async function handle(req, res) {
     if (p === "/api/canvas" && req.method === "GET") {
       const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 4));
       return send(res, 200, await canvas(hours)), true;
+    }
+    // a shown file, from the runtime, made into a page the reader frames
+    const sv = p.match(/^\/api\/shows\/([0-9a-f-]{36})\/view$/);
+    if (sv && req.method === "GET") {
+      let show = showById(sv[1]);
+      if (!show && url.searchParams.get("root")) { await showsFor([url.searchParams.get("root")]); show = showById(sv[1]); }
+      if (!show) return send(res, 404, { error: "Scout's runtime has no such shown file" }), true;
+      const out = viewResponse({ ...show, view: viewOf(show), name: path.basename(show.sourcePath) }, await showBytes(show.id));
+      res.writeHead(out.status, out.headers);
+      res.end(out.body);
+      return true;
     }
     if (p === "/api/notes" && req.method === "GET") return send(res, 200, { notes: await notes() }), true;
     if (p === "/api/notes" && req.method === "POST") {

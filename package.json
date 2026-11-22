@@ -34,7 +34,8 @@
     "prepare": "vite build"
   },
   "dependencies": {
-    "@openscout/scout": "^0.5.3"
+    "@openscout/scout": "^0.5.3",
+    "marked": "17.0.6"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

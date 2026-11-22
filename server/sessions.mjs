@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { CLAUDE_PROJECTS, RUNTIME } from "./paths.mjs";
+import { CLAUDE_PROJECTS } from "./paths.mjs";
+import { runtimeUrl, showsFor } from "./runtime.mjs";
 import { readTranscript, screensOf, stateOf as parsed } from "./transcripts.mjs";
 
 /** a session that wrote in the last this-long is working, unless it said it was done */
@@ -16,7 +17,7 @@ async function discover() {
   if (Date.now() - discovery.at < 15e3) return discovery;
   const next = { at: Date.now(), up: false, byId: new Map() };
   try {
-    const res = await fetch(`${RUNTIME}/v1/tail/discover`, { signal: AbortSignal.timeout(5e3) });
+    const res = await fetch(`${runtimeUrl()}/v1/tail/discover`, { signal: AbortSignal.timeout(5e3) });
     if (res.ok) {
       const d = await res.json();
       next.up = true;
@@ -142,11 +143,19 @@ export async function canvas(hours = 4) {
     if (!rec) bySession.set(t.session, (rec = { id: t.session, own: null, parts: [] }));
     if (t.subagent) rec.parts.push(s); else rec.own = s;
   }
+  // what agents showed on purpose, from the runtime, for every repository a session in the window
+  // worked in; each show goes to the session that made it
+  const roots = [...bySession.values()].map((rec) => { const s = rec.own || rec.parts[0]; return s?.cwd ? repoOf(s.cwd).root : ""; });
+  const shows = disc.up ? (await showsFor(roots)).filter((sh) => sh.at >= since) : [];
+  const showsBy = new Map();
+  for (const sh of shows) showsBy.set(sh.sessionId, [...(showsBy.get(sh.sessionId) || []), sh]);
   const projects = new Map();
   for (const rec of bySession.values()) {
     const all = [rec.own, ...rec.parts].filter(Boolean);
     const screens = all.flatMap(screensOf).filter((sc) => sc.at >= since).sort((a, b) => a.at - b.at);
-    if (!screens.length) continue;
+    const shown = showsBy.get(rec.id) || [];
+    showsBy.delete(rec.id);
+    if (!screens.length && !shown.length) continue;
     const own = rec.own || all[0];
     const cwd = own.cwd || all.find((s) => s.cwd)?.cwd || "";
     const d = disc.byId.get(rec.id) || {};
@@ -166,6 +175,20 @@ export async function canvas(hours = 4) {
         id: `${rec.id}:${sc.hash}`, hash: sc.hash, ext: sc.ext, w: sc.w, h: sc.h, at: sc.at,
         tool: sc.tool, url: sc.url, file: sc.file, caption: sc.caption, before: sc.before || null, open: !!sc.open,
       })),
+      shows: shown,
+    };
+    if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
+    projects.get(repo.root).sessions.push(session);
+  }
+  // shows from a session the canvas doesn't have (a Scout session, or one whose transcript is
+  // outside the window) get an area of their own, named for the worktree they came from
+  for (const [sid, list] of showsBy) {
+    const first = list[0], repo = repoOf(first.projectRoot);
+    const session = {
+      id: sid || `shown:${first.worktree}`, cwd: first.worktree, branch: first.branch,
+      title: `Shown from ${path.basename(first.worktree)}`, prompt: "",
+      firstAt: Math.min(...list.map((x) => x.at)), lastAt: Math.max(...list.map((x) => x.at)),
+      open: false, working: false, attention: null, now: null, screens: [], shows: list,
     };
     if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
     projects.get(repo.root).sessions.push(session);
@@ -175,7 +198,7 @@ export async function canvas(hours = 4) {
   list.sort((a, b) => b.sessions[0].lastAt - a.sessions[0].lastAt);
   const sessions = new Set(l.files.map((t) => t.session)).size;
   return {
-    at: Date.now(), hours, scout: { up: disc.up }, projects: list,
+    at: Date.now(), hours, scout: { up: disc.up, url: runtimeUrl(), shows: shows.length }, projects: list,
     // how far the read has come, by bytes, so a bar moves evenly
     loading: { done: l.done, first: l.first, read, total, sessions },
   };

@@ -397,3 +397,20 @@ button { font: inherit; color: inherit; }
   display: inline-grid; place-items: center; flex: none; border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent); background: var(--bg); color: var(--ink);
 }
+
+/* shown files: what an agent put in front of the person with scout show */
+.card.shown .media { display: grid; }
+.card.shown .doc { display: grid; grid-template-rows: auto auto 1fr; gap: 6px; padding: 14px 14px 10px; min-width: 0; color: var(--body); }
+.card.shown .doc-glyph { width: 22px; height: 22px; color: var(--accent); }
+.card.shown .doc-name { font-family: var(--mono); font-size: 12px; color: var(--ink, var(--body)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card.shown .doc-cap { font-size: 12px; line-height: 1.45; color: var(--dim); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
+
+.reader { position: fixed; inset: 0; z-index: 20; background: var(--bg); display: grid; grid-template-rows: 52px minmax(0, 1fr); }
+.reader-bar { display: flex; align-items: center; gap: 12px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--line); min-width: 0; }
+.reader-bar .title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reader-bar .where { color: var(--dim); font-family: var(--mono); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.reader-main { min-height: 0; display: grid; }
+.reader-main iframe { width: 100%; height: 100%; border: 0; background: var(--surface); }
+.reader-main.media { place-items: center; padding: 22px; }
+.reader-main.media img, .reader-main.media video { max-width: 100%; max-height: calc(100vh - 52px - 44px); border-radius: 6px; box-shadow: var(--shadow); }
+.reader-cap { padding: 10px 18px; border-top: 1px solid var(--line); color: var(--body); font-size: 13px; }

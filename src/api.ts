@@ -10,10 +10,20 @@ export type Session = {
   /** what it did last, in a few words */
   now: string | null;
   screens: Screen[];
+  /** files an agent put in front of the person with `scout show`, from Scout's runtime */
+  shows: Show[];
 };
+/** A shown file: the latest version of one file an agent showed, kept by Scout's runtime. */
+export type Show = {
+  id: string; itemId: string; sessionId: string | null; agentId: string; harness: string | null;
+  projectRoot: string; worktree: string; branch: string; path: string; name: string;
+  view: "image" | "video" | "markdown" | "html" | "pdf" | "text" | "file";
+  mediaType: string; size: number; caption: string; at: number; versions: number;
+};
+export const showView = (s: Show) => `/api/shows/${s.id}/view?root=${encodeURIComponent(s.projectRoot)}`;
 export type Project = { name: string; root: string; sessions: Session[] };
 export type Loading = { done: boolean; first: boolean; read: number; total: number; sessions: number };
-export type CanvasData = { at: number; hours: number; scout: { up: boolean }; projects: Project[]; loading: Loading };
+export type CanvasData = { at: number; hours: number; scout: { up: boolean; url?: string; shows?: number }; projects: Project[]; loading: Loading };
 
 export type Step = { what: "waiting" | "failed" | "sent" | "handed"; at: number; why?: string; how?: string | null; task?: string | null };
 export type Note = {

@@ -1,7 +1,7 @@
 // The canvas: repositories as frames, sessions as areas, screens as cards. Drag or scroll to move,
 // pinch or hold ⌘ and scroll to zoom. Only the cards in view are drawn.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ago, thumb, type Note, type Screen } from "./api";
+import { ago, thumb, type Note, type Screen, showView, type Show } from "./api";
 import { CARD_W, MEDIA_H, type Area, type Box, type Frame } from "./scene";
 import { savePlace } from "./place";
 import { HarnessCoin } from "./Harness";
@@ -38,6 +38,7 @@ type Props = {
   focus: { box: Box; at?: { sx: number; sy: number; k: number } } | null;
   onOpen: (area: Area, s: Screen, at?: { x: number; y: number }) => void;
   onMore: (sessionId: string) => void; opened: Set<string>;
+  onShow: (show: Show) => void;
 };
 
 const still = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -45,7 +46,7 @@ const still = () => typeof matchMedia === "function" && matchMedia("(prefers-red
 /** When each thing was first drawn, so only new arrivals fade in, not cards scrolled back into view. */
 const seen = new Map<string, number>();
 
-export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened }: Props) {
+export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened, onShow }: Props) {
   const view = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 1200, h: 800 });
   const [cam, setCam] = useState<Cam | null>(null);
@@ -181,7 +182,7 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened }:
           </div>
         ))}
         {frames.flatMap((f) => f.areas).filter((a) => inView(a.box)).map((a) => (
-          <AreaView key={a.session.id} area={a} inView={inView} byScreen={byScreen} moved={moved} onOpen={onOpen} onMore={onMore} opened={opened.has(a.session.id)} />
+          <AreaView key={a.session.id} area={a} inView={inView} byScreen={byScreen} moved={moved} onOpen={onOpen} onMore={onMore} onShow={onShow} opened={opened.has(a.session.id)} />
         ))}
         {working.filter((w) => inView(w.area.box)).map((w) => (
           <AgentCursor key={w.area.session.id} at={w.at} k={cam.k} say={w.area.session.now || w.area.session.title} title={w.area.session.title} flip={w.at.x > bounds.w - 380} />
@@ -338,7 +339,7 @@ function MapDock({ frames, bounds, cam, size, agents, setCam, zoomBy, fit }: {
         onLostPointerCapture={() => { drag.current = null; }} onKeyDown={key}>
         <svg width={map.w} height={map.h} viewBox={`0 0 ${map.w} ${map.h}`} aria-hidden="true">
           {frames.map((f) => rect(f.box, "map-frame", f.project.root))}
-          {frames.flatMap((f) => f.areas.flatMap((a) => a.cards.map((c) => rect(c.box, "map-card", c.screen.id))))}
+          {frames.flatMap((f) => f.areas.flatMap((a) => [...a.shows.map((c) => rect(c.box, "map-card", c.show.id)), ...a.cards.map((c) => rect(c.box, "map-card", c.screen.id))]))}
           {agents.map((p, i) => { const m = map.toMap({ x: p.x, y: p.y, w: 0, h: 0 }); return <circle key={i} className="map-dot" cx={m.x} cy={m.y} r={2} />; })}
           <rect className="map-view" x={seen.x} y={seen.y} width={seen.w} height={seen.h} />
         </svg>
@@ -354,9 +355,9 @@ function MapDock({ frames, bounds, cam, size, agents, setCam, zoomBy, fit }: {
   );
 }
 
-function AreaView({ area, inView, byScreen, moved, onOpen, onMore, opened }: {
+function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, opened }: {
   area: Area; inView: (b: Box) => boolean; byScreen: Map<string, Note[]>; moved: React.MutableRefObject<boolean>;
-  onOpen: Props["onOpen"]; onMore: (id: string) => void; opened: boolean;
+  onOpen: Props["onOpen"]; onMore: (id: string) => void; onShow: Props["onShow"]; opened: boolean;
 }) {
   const s = area.session;
   return (
@@ -369,7 +370,8 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, opened }: {
         <div className="meta">
           <span>{s.working ? "working" : s.open ? "open" : "closed"} · {ago(s.lastAt)}</span>
           {s.branch && <span className="mono">{s.branch}</span>}
-          <span>{s.screens.length} screens</span>
+          {s.shows?.length > 0 && <span>{s.shows.length} shown</span>}
+          {s.screens.length > 0 && <span>{s.screens.length} screens</span>}
           {(area.hidden > 0 || opened) && (
             <button className="more" onPointerDown={(e) => e.stopPropagation()} onClick={() => onMore(s.id)}>
               {opened ? "Show fewer" : `${area.hidden} more`}
@@ -378,6 +380,24 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, opened }: {
         </div>
         <div className="prompt">{s.prompt}</div>
       </div>
+      {area.shows.filter((c) => inView(c.box)).map(({ show, box }) => (
+        <button key={show.id} className={`card shown${fresh(show.id) ? " arriving" : ""}`} style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+          onClick={() => { if (!moved.current) onShow(show); }}>
+          <div className="media">
+            {show.view === "image" ? <img src={showView(show)} alt="" loading="lazy" draggable={false} />
+              : <div className="doc"><DocGlyph view={show.view} /><span className="doc-name">{show.name}</span><span className="doc-cap">{show.path.startsWith(show.worktree + "/") ? show.path.slice(show.worktree.length + 1) : show.path}</span></div>}
+          </div>
+          <div className="foot">
+            <div className="cap">{show.caption || show.name}</div>
+            <div className="sub">
+              <span>{ago(show.at)}</span>
+              <span className="tag accent">shown</span>
+              <span>{show.view === "file" ? show.mediaType : show.view}</span>
+              {show.versions > 1 && <span>{show.versions} versions</span>}
+            </div>
+          </div>
+        </button>
+      ))}
       {area.cards.filter((c) => inView(c.box)).map(({ screen: sc, box }) => {
         const pins = byScreen.get(sc.id) || [];
         return (
@@ -408,6 +428,18 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, opened }: {
         );
       })}
     </>
+  );
+}
+
+/** A document's mark: a page with its corner folded, and lines for text or a frame for a page. */
+function DocGlyph({ view }: { view: Show["view"] }) {
+  return (
+    <svg className="doc-glyph" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M4 1.5h5.5L12.5 4.5v10h-8.5z" fill="none" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
+      <path d="M9.5 1.5v3h3" fill="none" stroke="currentColor" strokeWidth="1" strokeLinejoin="round" />
+      {view === "html" ? <path d="M6.5 8.5 5.5 10l1 1.5M9.5 8.5l1 1.5-1 1.5" fill="none" stroke="currentColor" strokeWidth="1" />
+        : <path d="M6 8h4.5M6 10h4.5M6 12h3" stroke="currentColor" strokeWidth="1" />}
+    </svg>
   );
 }
 

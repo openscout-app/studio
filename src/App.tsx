@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type CanvasData, type Note, type Pointer, type Screen, type Session } from "./api";
+import { api, type CanvasData, type Note, type Pointer, type Screen, type Session, type Show } from "./api";
 import { Canvas } from "./Canvas";
 import { Arrival, Progress } from "./Loading";
 import { Stage } from "./Stage";
+import { Reader } from "./Reader";
 import { layout, type Area } from "./scene";
 import { readPlace } from "./place";
 import { NO_VIEW, START_HOURS, ViewControls, wider, type Filter, type View } from "./Controls";
@@ -33,6 +34,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [query, setQuery] = useState("");
+  const [reading, setReading] = useState<Show | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   // which projects and agents show, kept between visits
   const [view, setView] = useState<View>(readView);
@@ -109,11 +111,15 @@ export function App() {
       ...data,
       projects: data.projects.filter((p) => !hp.has(p.root) || p.sessions.some((s) => s.id === linked)).map((p) => ({
         ...p,
-        sessions: p.sessions.filter(agent).map((s) => ({ ...s, screens: s.screens.filter((sc) => keep(sc, `${p.name} ${s.title} ${s.prompt}`)) })),
+        sessions: p.sessions.filter(agent).map((s) => ({
+          ...s, screens: s.screens.filter((sc) => keep(sc, `${p.name} ${s.title} ${s.prompt}`)),
+          // a shown file has no notes or before/after yet, so only the plain view and search keep it
+          shows: (s.shows || []).filter((sh) => filter === "all" && (!query.trim() || `${p.name} ${s.title} ${s.prompt} ${sh.name} ${sh.path} ${sh.caption}`.toLowerCase().includes(query.trim().toLowerCase()))),
+        })),
       })),
     };
     return layout(shaped, opened);
-  }, [data, opened, keep, view, linked]);
+  }, [data, opened, keep, view, linked, filter, query]);
   // land back where you were if that session is in this window, else on the latest session. Sessions
   // are read newest first, so yours usually shows within a moment; past a short wait, take the latest.
   const place = useMemo(readPlace, [hours]);
@@ -164,7 +170,7 @@ export function App() {
     if (linked && data?.loading.done && data.hours === hours && !found && hours < 168) setHours(wider(hours));
   }, [linked, found, data?.loading.done, hours]);
   // nothing in the last few hours: look further back, a step at a time, unless a window was picked
-  const empty = !!data?.loading.done && data.hours === hours && !data.projects.some((p) => p.sessions.some((s) => s.screens.length));
+  const empty = !!data?.loading.done && data.hours === hours && !data.projects.some((p) => p.sessions.some((s) => s.screens.length || s.shows?.length));
   useEffect(() => {
     if (!picked && !linked && empty && hours < 72) setHours(wider(hours));
   }, [picked, linked, empty, hours]);
@@ -177,7 +183,7 @@ export function App() {
         <div className="bar-side">
           <a className="brand" href="/" aria-label="Scout Studio">
             <span className="lockup" role="img" aria-label="Scout" />
-            <span className="product">Canvas</span>
+            <span className="product">Studio</span>
           </a>
         </div>
         <label className="find">
@@ -204,13 +210,14 @@ export function App() {
           returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
           controls={data && <ViewControls data={data} hours={hours} setHours={pick} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
           {scene && ready && (
-            <Canvas key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened}
+            <Canvas key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened} onShow={setReading}
               onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
           )}
           {data && <Progress loading={data.loading} counts={counts} />}
         </Arrival>
       </main>
       {missing && <div className="toast" role="alert" onClick={() => { setMissing(null); history.replaceState(null, "", "/"); }}>{missing}</div>}
+      {reading && <Reader show={reading} onClose={() => setReading(null)} />}
       {target && open && (
         <Stage
           key={target.session.id} session={target.session} project={target.project} screens={target.screens} index={target.index}
