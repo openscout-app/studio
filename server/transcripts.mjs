@@ -68,6 +68,29 @@ export function plain(text) {
     .trim();
 }
 
+// Scout delivers an ask or a message wrapped: "New broker ask from <who>. Task: <task> Follow the
+// OpenScout collaboration contract: …". A person wants the task, not the wrapping.
+const WRAPPED = /^New (?:broker )?(?:ask|message) from \S+\s+(?:Task|Message):\s*/;
+export const isWrapped = (text) => WRAPPED.test(text || "");
+/** What was asked, without Scout's delivery wrapping. */
+export function asked(text) {
+  if (!isWrapped(text)) return text;
+  return text.replace(WRAPPED, "").replace(/\s*Follow the OpenScout collaboration contract:[\s\S]*$/, "").trim();
+}
+
+/** What an agent said, as plain words for a caption: its Markdown marks taken out. */
+export function prose(text) {
+  return (text || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/(^|[\s(])[*_]([^*_\s][^*_]*?)[*_](?=[\s).,;:!?]|$)/g, "$1$2")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^\s{0,3}(#{1,6}\s+|[-*+]\s+|>\s?)/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const hashOf = (b64) => crypto.createHash("sha1").update(b64).digest("hex").slice(0, 16);
 const extOf = (media) => media === "image/jpeg" ? "jpg" : media === "image/webp" ? "webp" : media === "image/gif" ? "gif" : "png";
 
@@ -120,7 +143,7 @@ function closeTurn(s) {
     if (i >= 0) kept[i] = sc; else kept.push(sc);
   }
   for (const sc of kept) {
-    sc.caption = s.said.trim().slice(0, 600);
+    sc.caption = prose(s.said).slice(0, 600);
     const prev = sc.subject && s.lastOf.get(sc.subject);
     if (prev && prev.hash === sc.hash) continue; // the same screen again: it's on the canvas already
     if (prev && sameShape(sc, prev)) sc.before = { hash: prev.hash, ext: prev.ext, at: prev.at };
@@ -152,7 +175,7 @@ function onEntry(s, e) {
         s.mark = marks;
       } else {
         s.mark = null;
-        if (!s.prompt) s.prompt = plain(text).slice(0, 200);
+        if (!s.prompt) s.prompt = asked(plain(text)).slice(0, 200);
       }
       return;
     }
@@ -241,6 +264,6 @@ export const stateOf = (file) => states.get(file) || null;
 
 /** A turn still open has screens that aren't settled yet; show them anyway, as they stand. */
 export function screensOf(s) {
-  const open = s.turnScreens.map((sc) => ({ ...sc, caption: s.said.trim().slice(0, 600), open: true }));
+  const open = s.turnScreens.map((sc) => ({ ...sc, caption: prose(s.said).slice(0, 600), open: true }));
   return [...s.screens, ...open];
 }

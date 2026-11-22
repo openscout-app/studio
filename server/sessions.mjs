@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { CLAUDE_PROJECTS, HOME } from "./paths.mjs";
 import { runtimeUrl, showsFor, watchShows } from "./runtime.mjs";
-import { readTranscript, screensOf, stateOf as parsed } from "./transcripts.mjs";
+import { readTranscript, screensOf, stateOf as parsed, isWrapped } from "./transcripts.mjs";
 
 /** a session that wrote in the last this-long is working, unless it said it was done */
 const WORKING_MS = 90e3;
@@ -177,7 +177,8 @@ export async function canvas(hours = 4) {
     const session = {
       id: rec.id, cwd, branch: branchOf(cwd),
       // Claude's own title first; Scout's relay names (session-…-relay-agent) say nothing to a person
-      title: [d.customTitle, d.aiTitle, d.title, o?.name, d.sessionName].find((t) => t && !/^session-[a-z0-9]+-[a-z0-9]+/.test(t)) || own.prompt.slice(0, 80) || rec.id.slice(0, 8),
+      // and a title that is only Scout's delivery wrapping says nothing either: the task says more
+      title: [d.customTitle, d.aiTitle, d.title, o?.name, d.sessionName].find((t) => t && !/^session-[a-z0-9]+-[a-z0-9]+/.test(t) && !isWrapped(t)) || own.prompt.slice(0, 80) || rec.id.slice(0, 8),
       prompt: own.prompt, firstAt: own.firstAt, lastAt,
       open: !!o, working, attention: d.attention || d.waitingFor || null,
       // what it did last, from it or one of its subagents, whichever was later

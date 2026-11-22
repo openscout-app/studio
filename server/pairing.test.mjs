@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sameShape, subjectOf, plain } from "./transcripts.mjs";
+import { sameShape, subjectOf, plain, asked, prose } from "./transcripts.mjs";
 import { imageSize } from "./image-size.mjs";
 
 test("a page is its address, without the query", () => {
@@ -43,4 +43,19 @@ test("image sizes come from the header", () => {
 test("prompts read without their wrapper tags", () => {
   assert.equal(plain('<pasted_content id="69ca"> New broker ask </pasted_content>'), "New broker ask");
   assert.equal(plain("<system-reminder>hidden</system-reminder>Fix the header"), "Fix the header");
+});
+
+test("a delivered ask reads as its task", () => {
+  assert.equal(
+    asked("New broker ask from rounds-scout-delivery.scout-delivery.arts-mini. Task: Fix the header. Follow the OpenScout collaboration contract: answer directly if you can."),
+    "Fix the header.",
+  );
+  assert.equal(asked("New broker message from art.arts-mini. Message: Ship it"), "Ship it");
+  assert.equal(asked("Fix the header"), "Fix the header");
+});
+
+test("a caption reads as words, without Markdown marks", () => {
+  assert.equal(prose("Studio now has a **Topics** section in `src/App.tsx`."), "Studio now has a Topics section in src/App.tsx.");
+  assert.equal(prose("## Done\n- see [the PR](https://x.y/1) and _this_"), "Done see the PR and this");
+  assert.equal(prose("a snake_case_name stays"), "a snake_case_name stays");
 });

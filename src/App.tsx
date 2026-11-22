@@ -27,8 +27,11 @@ const pointerId = () => location.pathname.match(/^\/p\/(p_[a-z0-9]+)\/?$/)?.[1];
 export function App() {
   // how far back: every visit starts short. Picking a window holds it for the visit; until then the canvas
   // widens on its own when the window holds no screens.
-  const [hours, setHours] = useState(START_HOURS);
-  const [picked, setPicked] = useState(false);
+  // ?hours=24 in the address opens on that window, as if it had been picked
+  const startAt = Number(new URLSearchParams(location.search).get("hours"));
+  const given = [4, 24, 72].includes(startAt) ? startAt : 0;
+  const [hours, setHours] = useState(given || START_HOURS);
+  const [picked, setPicked] = useState(!!given);
   const pick = (h: number) => { setPicked(true); setHours(h); };
   const [data, setData] = useState<CanvasData | null>(null);
   const [error, setError] = useState<string | null>(null);
