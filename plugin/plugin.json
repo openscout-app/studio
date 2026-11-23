@@ -1,0 +1,43 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "scout-studio",
+  "version": "0.2.0",
+  "description": "Show the person the screens an agent took, and point at one spot on a screen with what to say. Hosts that draw MCP Apps show the screens in the thread.",
+  "author": {
+    "name": "OpenScout",
+    "url": "https://openscout.app"
+  },
+  "homepage": "https://openscout.app",
+  "repository": "https://github.com/openscout-app/studio",
+  "license": "Apache-2.0",
+  "keywords": [
+    "openscout",
+    "screenshots",
+    "mcp-apps",
+    "review"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Scout Studio",
+        "shortDescription": "Point at the screens an agent took",
+        "developerName": "OpenScout",
+        "category": "Productivity",
+        "capabilities": [
+          "Interactive"
+        ],
+        "websiteURL": "https://openscout.app",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png",
+        "defaultPrompt": [
+          "Show me the screens you took.",
+          "Point at what you changed on the last screenshot."
+        ]
+      }
+    },
+    "ai.capy": {
+      "displayName": "Scout Studio",
+      "icon": "./assets/icon.png"
+    }
+  }
+}
