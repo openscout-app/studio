@@ -114,12 +114,12 @@ Scout Studio also remembers where you were. When you open it again, the session 
 
 ### In the thread, as a plugin
 
-The same three tools also come as a plugin, in `plugin/`. In an app that draws MCP Apps, such as T3 Code, `screens` shows the session's screens as cards under the call, and `point` shows the screen with the spot marked and a box to reply in. Other apps show the tool's text, as before.
+The same three tools also come as a plugin, in `plugin/`, listed in the `openscout` marketplace. In an app that draws MCP Apps, such as T3 Code, `screens` shows the session's screens as cards under the call, and `point` shows the screen with the spot marked and a box to reply in. Other apps show the tool's text, as before.
 
 | App | Install |
 | --- | --- |
-| Claude Code | `claude plugin marketplace add openscout-app/studio`, then `claude plugin install scout-studio@openscout-studio` |
-| Codex | `codex plugin marketplace add openscout-app/studio`, then `codex plugin add scout-studio@openscout-studio` |
+| Claude Code | `claude plugin marketplace add openscout-app/claude-scout`, then `claude plugin install scout-studio@openscout` |
+| Codex | `codex plugin marketplace add openscout-app/claude-scout`, then `codex plugin add scout-studio@openscout` |
 | T3 Code | Runs Claude Code, so install it for Claude Code. |
 | Capy | Add `https://github.com/openscout-app/studio/tree/main/plugin` as a plugin. |
 
