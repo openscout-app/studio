@@ -1,7 +1,7 @@
 // The way in: a short sequence while Scout Studio finds Scout and your sessions, then the canvas,
 // landing on the latest session while the rest are read behind it.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { CanvasData, Loading } from "./api";
+import { count, type CanvasData, type Loading } from "./api";
 
 const STEP_MS = 280; // the least each step shows, so the sequence reads as one
 
@@ -108,7 +108,7 @@ export function Progress({ loading, counts }: { loading: Loading; counts: { sess
       <div className="bar"><i style={{ width: `${loading.done ? 100 : Math.max(4, pct)}%` }} /></div>
       <span>
         {loading.done
-          ? <>All caught up · {counts.sessions} sessions · {counts.screens} screens</>
+          ? <>All caught up · {count(counts.sessions, "session")} · {count(counts.screens, "screen")}</>
           : <>Reading your sessions · <span className="mono">{pct}%</span> · {counts.sessions} with screens so far</>}
       </span>
     </div>

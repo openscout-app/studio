@@ -56,7 +56,7 @@ export function repoOf(cwd) {
     if (common) root = common.endsWith("/.git") ? path.dirname(common) : common;
   } catch {
     // the folder is gone (a removed worktree): file it under the sibling repo its name starts with,
-    // so scout-apps-board-ui sits with scout-apps
+    // so a worktree named app-board-ui sits with app
     const parent = path.dirname(root), base = path.basename(root);
     let sibs = [];
     try { sibs = fs.readdirSync(parent).filter((n) => base.startsWith(`${n}-`) && fs.existsSync(path.join(parent, n, ".git"))); } catch {}

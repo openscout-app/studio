@@ -1,5 +1,5 @@
 // What an agent did last, in a few words, from one tool call or what it wrote. The wording follows
-// Scout's canvas (scout-apps packages/web/server/canvas.ts, describe), so an agent reads the same in both.
+// Scout's own canvas in its web app, so an agent reads the same in both.
 import path from "node:path";
 
 const clip = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };

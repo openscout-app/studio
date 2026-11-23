@@ -4,6 +4,11 @@ What your agents make, on Scout's canvas. Pin a note on a screen, and Scout take
 
 Each repository is a frame, each Claude Code session is an area, and the screens a session took are cards, newest first. Open a screen to see it full size. When the session took the same view earlier, a wipe lays the before over the after. Click or right-click anywhere on a screen to pin a note there. Scout delivers the note into that session, and the session's answer shows beside the note as a thread.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/studio-dark.png">
+  <img alt="Scout Studio showing one repository with two Claude Code sessions. Each session's screens are cards, newest first, with what the agent said about each one." src="docs/studio-light.png">
+</picture>
+
 ## Run it
 
 ```sh
@@ -32,11 +37,11 @@ npm run build
 npm start          # or `npm run dev` for hot reload
 ```
 
-You need:
+Studio uses:
 
-- Node 20 or later, on macOS. Card thumbnails are made with `sips`.
-- Scout running on this Mac. The canvas reads session titles from Scout's runtime at `127.0.0.1:43110` (`SCOUT_RUNTIME_URL` changes it).
-- The `scout` command on your PATH (`SCOUT_BIN` changes it). Notes go out with `scout session send`.
+- `sips`, which comes with macOS, to make card thumbnails.
+- Scout's runtime at `127.0.0.1:43110`, for session titles and shown files (`SCOUT_RUNTIME_URL` changes it).
+- The `scout` command, to send notes with `scout session send` (`SCOUT_BIN` changes it).
 
 ## Where screens come from
 

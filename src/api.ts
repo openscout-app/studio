@@ -68,3 +68,6 @@ export function ago(at: number, now = Date.now()) {
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
   return new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+
+/** "1 session", "3 sessions". */
+export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

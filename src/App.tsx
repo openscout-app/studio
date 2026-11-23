@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type CanvasData, type Note, type Pointer, type Screen, type Session, type Show } from "./api";
+import { api, count, type CanvasData, type Note, type Pointer, type Screen, type Session, type Show } from "./api";
 import { Canvas } from "./Canvas";
 import { Arrival, Progress } from "./Loading";
 import { Stage } from "./Stage";
@@ -209,7 +209,7 @@ export function App() {
           {data && (
             <span className="chip counts">
               {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
-              {counts.sessions} sessions
+              {count(counts.sessions, "session")}
             </span>
           )}
           {data && <span className="sep" />}

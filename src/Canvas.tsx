@@ -1,7 +1,7 @@
 // The canvas: repositories as frames, sessions as areas, screens as cards. Drag or scroll to move,
 // pinch or hold ⌘ and scroll to zoom. Only the cards in view are drawn.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ago, thumb, type Note, type Screen, showView, type Show } from "./api";
+import { ago, count, thumb, type Note, type Screen, showView, type Show } from "./api";
 import { CARD_W, MEDIA_H, type Area, type Box, type Frame } from "./scene";
 import { savePlace } from "./place";
 import { HarnessCoin } from "./Harness";
@@ -194,7 +194,7 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened, o
   );
 }
 
-/* ---- an agent's cursor, as on Scout's canvas (scout-apps canvas/marks.tsx, shape J17) */
+/* ---- an agent's cursor, drawn as Scout's own canvas draws it */
 
 /** A polygon whose corners ease by a quadratic curve, each inset by its radius or 44% of the shorter edge. */
 function roundedPolygon(vs: [number, number, number][]): string {
@@ -238,8 +238,7 @@ function AgentCursor({ at, k, say, title, flip }: { at: { x: number; y: number }
 }
 
 /*
- * The minimap and zoom, one unit at the bottom left, as on Scout's canvas (scout-apps canvas/Minimap.tsx and
- * minimap-frame.ts): the map, a seam, then the zoom row. Click the map to go there, drag the frame to pan, scroll on
+ * The minimap and zoom, one unit at the bottom left, as on Scout's own canvas: the map, a seam, then the zoom row. Click the map to go there, drag the frame to pan, scroll on
  * it to zoom; with it focused, arrow keys pan and + and − zoom.
  */
 const MAP_MAX = 196, MAP_MIN = 56, MAP_PAD = 6;
@@ -371,7 +370,7 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, opene
           <span>{s.working ? "working" : s.open ? "open" : "closed"} · {ago(s.lastAt)}</span>
           {s.branch && <span className="mono">{s.branch}</span>}
           {s.shows?.length > 0 && <span>{s.shows.length} shown</span>}
-          {s.screens.length > 0 && <span>{s.screens.length} screens</span>}
+          {s.screens.length > 0 && <span>{count(s.screens.length, "screen")}</span>}
           {(area.hidden > 0 || opened) && (
             <button className="more" onPointerDown={(e) => e.stopPropagation()} onClick={() => onMore(s.id)}>
               {opened ? "Show fewer" : `${area.hidden} more`}

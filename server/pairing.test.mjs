@@ -47,10 +47,10 @@ test("prompts read without their wrapper tags", () => {
 
 test("a delivered ask reads as its task", () => {
   assert.equal(
-    asked("New broker ask from rounds-scout-delivery.scout-delivery.arts-mini. Task: Fix the header. Follow the OpenScout collaboration contract: answer directly if you can."),
+    asked("New broker ask from rounds-delivery.build-host. Task: Fix the header. Follow the OpenScout collaboration contract: answer directly if you can."),
     "Fix the header.",
   );
-  assert.equal(asked("New broker message from art.arts-mini. Message: Ship it"), "Ship it");
+  assert.equal(asked("New broker message from operator.build-host. Message: Ship it"), "Ship it");
   assert.equal(asked("Fix the header"), "Fix the header");
 });
 
