@@ -112,6 +112,21 @@ Coordinates are pixels of the screenshot. Add `--fraction` to give them as 0 to 
 
 Scout Studio also remembers where you were. When you open it again, the session you were looking at sits where you left it.
 
+### In the thread, as a plugin
+
+The same three tools also come as a plugin, in `plugin/`. In an app that draws MCP Apps, such as T3 Code, `screens` shows the session's screens as cards under the call, and `point` shows the screen with the spot marked and a box to reply in. Other apps show the tool's text, as before.
+
+| App | Install |
+| --- | --- |
+| Claude Code | `claude plugin marketplace add openscout-app/studio`, then `claude plugin install scout-studio@openscout-studio` |
+| Codex | `codex plugin marketplace add openscout-app/studio`, then `codex plugin add scout-studio@openscout-studio` |
+| T3 Code | Runs Claude Code, so install it for Claude Code. |
+| Capy | Add `https://github.com/openscout-app/studio/tree/main/plugin` as a plugin. |
+
+The plugin and `setup` register the same server. Keep one: after you install the plugin, run `claude mcp remove scout-studio --scope user`.
+
+The tools read Claude Code transcripts on this host. In a Codex thread or on a Capy cloud machine they load, but they find no session.
+
 ## Checks
 
 ```sh

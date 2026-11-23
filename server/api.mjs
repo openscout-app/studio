@@ -35,7 +35,11 @@ function body(req) {
   });
 }
 
-/** A card-sized JPEG of a screen, made once with sips. Null if it can't be made. */
+/**
+ * A smaller JPEG of a screen, made once with sips. Null if it can't be made. "t" is card-sized;
+ * "m" is the size a view in an agent's thread shows one screen at, sharp without the whole PNG.
+ */
+const SIZES = { t: 520, m: 1600 };
 const making = new Map();
 const queue = [];
 let running = 0;
@@ -44,22 +48,22 @@ function next() {
   while (running < 4 && queue.length) {
     const job = queue.shift();
     running++;
-    execFile("sips", ["-Z", "520", "-s", "format", "jpeg", "-s", "formatOptions", "80", job.src, "--out", job.out], { timeout: 20e3 }, (e) => {
+    execFile("sips", ["-Z", String(SIZES[job.size]), "-s", "format", "jpeg", "-s", "formatOptions", "80", job.src, "--out", job.out], { timeout: 20e3 }, (e) => {
       running--;
-      making.delete(job.hash);
+      making.delete(job.out);
       job.ok(e ? null : job.out);
       next();
     });
   }
 }
-function thumb(src, hash) {
-  const out = path.join(IMG, "t", `${hash}.jpg`);
+function thumb(src, hash, size = "t") {
+  const out = path.join(IMG, size, `${hash}.jpg`);
   if (fs.existsSync(out)) return Promise.resolve(out);
-  if (!making.has(hash)) {
+  if (!making.has(out)) {
     fs.mkdirSync(path.dirname(out), { recursive: true });
-    making.set(hash, new Promise((ok) => { queue.push({ src, out, hash, ok }); next(); }));
+    making.set(out, new Promise((ok) => { queue.push({ src, out, size, ok }); next(); }));
   }
-  return making.get(hash);
+  return making.get(out);
 }
 
 const TYPES = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
@@ -72,10 +76,10 @@ export async function handle(req, res) {
   if (!local(req)) { send(res, 403, { error: "local only" }); return true; }
   startSweep();
 
-  const img = p.match(/^\/img\/(t\/)?([0-9a-f]{16})\.(png|jpg|webp|gif)$/);
+  const img = p.match(/^\/img\/(?:([tm])\/)?([0-9a-f]{16})\.(png|jpg|webp|gif)$/);
   if (img) {
     let file = materialize(img[2], img[3]) || path.join(IMG, `${img[2]}.${img[3]}`);
-    if (img[1] && fs.existsSync(file)) file = (await thumb(file, img[2])) || file;
+    if (img[1] && fs.existsSync(file)) file = (await thumb(file, img[2], img[1])) || file;
     if (!fs.existsSync(file)) { send(res, 404, { error: "no such screen" }); return true; }
     res.writeHead(200, { "content-type": TYPES[path.extname(file).slice(1)], "cache-control": "max-age=31536000, immutable" });
     fs.createReadStream(file).pipe(res);

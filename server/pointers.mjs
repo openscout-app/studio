@@ -29,7 +29,7 @@ export async function screensOf(session, limit = 12) {
 }
 
 const brief = (sc) => ({
-  id: sc.hash, at: new Date(sc.at).toISOString(), w: sc.w, h: sc.h,
+  id: sc.hash, ext: sc.ext, at: new Date(sc.at).toISOString(), w: sc.w, h: sc.h,
   page: sc.url || null, file: sc.file || null, tool: sc.tool, settled: !sc.open,
   said: (sc.caption || "").slice(0, 160),
 });
