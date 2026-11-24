@@ -82,7 +82,7 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
     setBusy(true);
     try {
       const re = replyTo && replyTo.screen.hash === sc.hash ? { re: replyTo.id, reSay: replyTo.say } : {};
-      const { note } = await api.add({ session: session.id, project: project.name, cwd: session.cwd, screen: sc, x: draft.x, y: draft.y, text, ...re });
+      const { note } = await api.add({ session: session.id, harness: session.harness, project: project.name, cwd: session.cwd, screen: sc, x: draft.x, y: draft.y, text, ...re });
       setDraft(null); setText(""); setCurrent(note.id); setReplyTo(null); onNotes();
     } finally { setBusy(false); }
   };
@@ -173,7 +173,7 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
                   }}
                 />
                 <div className="row">
-                  <span>{scoutUp ? (session.open ? "Scout takes it to the session now" : "The session is closed; it waits for it") : "Scout isn't running; it waits for Scout"}</span>
+                  <span>{deliveryHint(session, scoutUp)}</span>
                   <button className="primary" disabled={!text.trim() || busy} onClick={submit}>Send</button>
                 </div>
               </div>
@@ -207,6 +207,15 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
 }
 
 /** A note out with its session while that session works on it. */
+function deliveryHint(session: Session, scoutUp: boolean) {
+  if (session.id.startsWith("studio-") || (session.harness && !["claude", "codex"].includes(session.harness))) {
+    return "Your agent can read this note with feedback";
+  }
+  if (!scoutUp) return "Scout will try to deliver this note when the runtime starts";
+  if (session.harness === "codex") return "Scout will look for this Codex session";
+  return session.open ? "Scout takes it to the session now" : "Scout will try again when the session opens";
+}
+
 function live(n: Note, s: Session) {
   return !n.kept && !!n.arrivedAt && !n.answers.length && s.working;
 }
@@ -215,9 +224,10 @@ function status(n: Note, s: Session, project: Project): { text: string; tone: ""
   if (n.kept) return { text: "Done", tone: "" };
   const last = n.trail.at(-1);
   if (!last) return { text: "Scout is taking it to the session…", tone: "accent", working: true };
+  if (n.answers.length) return { text: `Answered ${ago(n.answers.at(-1)!.at)}`, tone: "ok" };
+  if (last.what === "available" || (n.arrivedAt && last.what !== "sent")) return { text: n.arrivedAt ? "Read by the session" : "Available for the session to read", tone: n.arrivedAt ? "ok" : "" };
   if (last.what === "handed") return { text: `Handed to a new Claude session in ${project.name}${last.task ? ` (${last.task})` : ""}`, tone: "ok" };
   if (last.what === "sent") {
-    if (n.answers.length) return { text: `Answered ${ago(n.answers.at(-1)!.at)}`, tone: "ok" };
     if (n.arrivedAt) return s.working ? { text: "It arrived; the session is on it", tone: "accent", working: true } : { text: "It arrived; no answer yet", tone: "" };
     return { text: `Sent through Scout ${ago(last.at)}`, tone: "ok" };
   }
@@ -241,7 +251,7 @@ function Thread({ n, i, session, project, current, onFocus, onNotes }: { n: Note
       ))}
       <div className="status">{st.working ? <Working /> : <span className={`dot ${st.tone}`} />}<span>{st.text}</span></div>
       <div className="actions">
-        {(last === "waiting" || last === "failed") && !n.kept && <button className="ghost accent" onClick={() => act(api.handOff(n.id))}>Hand to a new session</button>}
+        {(last === "waiting" || last === "failed") && (!session.harness || session.harness === "claude") && !n.kept && <button className="ghost accent" onClick={() => act(api.handOff(n.id))}>Hand to a new session</button>}
         {last === "failed" && !n.kept && <button className="ghost" onClick={() => act(api.retry(n.id))}>Retry</button>}
         <button className="ghost" onClick={() => act(api.keep(n.id, !n.kept))}>{n.kept ? "Reopen" : "Done"}</button>
         <button className="ghost" onClick={() => act(api.remove(n.id))}>Delete</button>

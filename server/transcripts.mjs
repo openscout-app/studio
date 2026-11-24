@@ -5,6 +5,7 @@
 // that is still running costs one small read per refresh. Reading yields between steps, so the
 // server answers while a long transcript is still being read. An image stays in its transcript
 // until it is first shown; only where it is (which line of which file) is kept until then.
+import { codexEntry } from "./codex.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, said } from "./doing.mjs";
@@ -121,6 +122,7 @@ export function materialize(hash, ext) {
     try { fs.readSync(fd, buf, 0, p.len, p.at); } finally { fs.closeSync(fd); }
     entry = JSON.parse(buf.toString("utf8"));
   } catch { return null; }
+  if (entry.type === "response_item") entry = codexEntry(entry);
   for (const r of Array.isArray(entry?.message?.content) ? entry.message.content : []) {
     for (const part of Array.isArray(r?.content) ? r.content : []) {
       const b64 = part?.type === "image" && part.source?.data;
@@ -158,6 +160,7 @@ function onEntry(s, e) {
   const at = Date.parse(e.timestamp || "") || 0;
   if (at) { s.firstAt ||= at; s.lastAt = Math.max(s.lastAt, at); }
   if (e.cwd && !s.cwd) s.cwd = e.cwd;
+  if (e.turnEnded) { closeTurn(s); s.lastStop = "end_turn"; }
   const m = e.message;
   if (!m) return;
   const content = m.content;
@@ -247,7 +250,8 @@ async function read(file, owner) {
           if (nl === pos) continue;
           let e; try { e = JSON.parse(data.toString("utf8", pos, nl)); } catch { continue; }
           s.line = { at: base + pos, len: nl - pos };
-          onEntry(s, e);
+          if (e.payload && !e.message) e = codexEntry(e);
+          if (e) onEntry(s, e);
         }
         s.carry = Buffer.from(data.subarray(pos));
         s.line = null;

@@ -106,7 +106,7 @@ export function ViewControls({ data, hours, setHours, filter, setFilter, view, s
               <li key={s.id} className={out ? "out" : ""}>
                 <label>
                   <input type="checkbox" checked={!hs.has(s.id)} onChange={() => setView({ ...view, hiddenSessions: flip(view.hiddenSessions, s.id) })} />
-                  <HarnessCoin size={16} />
+                  <HarnessCoin harness={s.harness} size={16} />
                   <span className={`dot${s.working ? " accent" : s.open ? " ok" : ""}`} />
                   <span className="name">{s.title}</span>
                   <span className="meta">{project}</span>

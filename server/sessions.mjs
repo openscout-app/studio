@@ -1,5 +1,7 @@
 // The canvas's contents: every Claude Code session that took a screen in the window asked for,
 // grouped by the repository it worked in, with what Scout and Claude know about it right now.
+import { sharedInWindow } from "./shared-screens.mjs";
+import { codexFiles } from "./codex.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -81,7 +83,7 @@ function branchOf(cwd) {
 
 /** Every transcript written in the window: a session's own, and its subagents' under it. */
 function transcriptsSince(since) {
-  const out = [];
+  const out = codexFiles(since);
   let dirs = [];
   try { dirs = fs.readdirSync(CLAUDE_PROJECTS); } catch { return out; }
   for (const d of dirs) {
@@ -142,6 +144,7 @@ export async function canvas(hours = 4) {
     read += s ? Math.max(0, Math.min(s.offset, t.size) - from) : 0;
     if (!s || s.offset < t.size) partial.add(t.session);
     if (!s) continue;
+    s.harness = t.harness || "claude";
     let rec = bySession.get(t.session);
     if (!rec) bySession.set(t.session, (rec = { id: t.session, own: null, parts: [] }));
     if (t.subagent) rec.parts.push(s); else rec.own = s;
@@ -175,7 +178,7 @@ export async function canvas(hours = 4) {
     const working = !!o && (o.status === "busy" || (Date.now() - lastAt < WORKING_MS && (own.lastStop !== "end_turn" || own.openTools > 0)));
     const repo = repoOf(cwd);
     const session = {
-      id: rec.id, cwd, branch: branchOf(cwd),
+      id: rec.id, harness: own.harness || "claude", cwd, branch: branchOf(cwd),
       // Claude's own title first; Scout's relay names (session-…-relay-agent) say nothing to a person
       // and a title that is only Scout's delivery wrapping says nothing either: the task says more
       title: [d.customTitle, d.aiTitle, d.title, o?.name, d.sessionName].find((t) => t && !/^session-[a-z0-9]+-[a-z0-9]+/.test(t) && !isWrapped(t)) || own.prompt.slice(0, 80) || rec.id.slice(0, 8),
@@ -192,12 +195,29 @@ export async function canvas(hours = 4) {
     if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
     projects.get(repo.root).sessions.push(session);
   }
+  for (const { id, screens } of sharedInWindow(since)) {
+    const first = screens[0], repo = repoOf(first.cwd);
+    if (!projects.has(repo.root)) projects.set(repo.root, { ...repo, sessions: [] });
+    const group = projects.get(repo.root);
+    let session = group.sessions.find(s => s.id === id);
+    if (!session) {
+      session = { id, harness: first.harness, cwd: first.cwd, branch: branchOf(first.cwd),
+        title: first.caption || `Screens from ${first.harness}`, prompt: "", firstAt: screens.at(-1).at,
+        lastAt: first.at, open: false, working: false, now: null, attention: null, screens: [], shows: showsBy.get(id) || [] };
+      showsBy.delete(id);
+      group.sessions.push(session);
+    }
+    const seenHashes = new Set(session.screens.map(s => s.hash));
+    for (const sc of screens) if (!seenHashes.has(sc.hash)) session.screens.push({ ...sc, id: id + ":" + sc.hash });
+    session.screens.sort((a,b) => a.at - b.at);
+    session.lastAt = Math.max(session.lastAt, first.at);
+  }
   // shows from a session the canvas doesn't have (a Scout session, or one whose transcript is
   // outside the window) get an area of their own, named for the worktree they came from
   for (const [sid, list] of showsBy) {
     const first = list[0], repo = repoOf(first.projectRoot);
     const session = {
-      id: sid || `shown:${first.worktree}`, cwd: first.worktree, branch: first.branch,
+      id: sid || `shown:${first.worktree}`, harness: first.harness || "scout", cwd: first.worktree, branch: first.branch,
       title: `Shown from ${path.basename(first.worktree)}`, prompt: "",
       firstAt: Math.min(...list.map((x) => x.at)), lastAt: Math.max(...list.map((x) => x.at)),
       open: false, working: false, attention: null, now: null, screens: [], shows: list,
@@ -275,6 +295,9 @@ export async function touch(file) {
 
 /** The parse state of a session's own transcript, read up to now, for the answers to notes sent into it. */
 export async function stateOf(sessionId) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(sessionId)) return null;
+  const codex = codexFiles(0, sessionId)[0];
+  if (codex) return readTranscript(codex.file, sessionId);
   let dirs = [];
   try { dirs = fs.readdirSync(CLAUDE_PROJECTS); } catch { return null; }
   for (const d of dirs) {

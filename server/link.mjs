@@ -1,44 +1,32 @@
-// Which session and which of its screens an agent means: the session from CLAUDE_CODE_SESSION_ID
-// (or the latest in a folder), its screens as the canvas shows them, and one picked from those.
+// Resolve a session and its screens by their exact identifiers.
+import { sharedScreens } from "./shared-screens.mjs";
+import { codexFiles } from "./codex.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { CLAUDE_PROJECTS } from "./paths.mjs";
 import { readTranscript, screensOf } from "./transcripts.mjs";
 
-/** Claude Code keeps a project's transcripts in a folder named after its path. */
-const folderOf = (cwd) => cwd.replace(/[^a-zA-Z0-9]/g, "-");
-
-/** The session to link: the one asked for, the one running this command, or the latest in this folder. */
-export function findSession({ session, cwd = process.cwd(), env = process.env } = {}) {
-  const id = session || env.CLAUDE_CODE_SESSION_ID;
+/** An exact session ID can belong to a Claude transcript, a Codex rollout or a shared screen. */
+export function findSession({ session: id }) {
+  if (typeof id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(id)) return null;
   let dirs = [];
   try { dirs = fs.readdirSync(CLAUDE_PROJECTS); } catch {}
-  if (id) {
-    for (const d of dirs) {
-      const file = path.join(CLAUDE_PROJECTS, d, `${id}.jsonl`);
-      if (fs.existsSync(file)) return { id, file };
-    }
-    return { id, file: null };
+  for (const d of dirs) {
+    const file = path.join(CLAUDE_PROJECTS, d, `${id}.jsonl`);
+    if (fs.existsSync(file)) return { id, file };
   }
-  const dir = path.join(CLAUDE_PROJECTS, folderOf(cwd));
-  let best = null;
-  try {
-    for (const n of fs.readdirSync(dir)) {
-      if (!n.endsWith(".jsonl")) continue;
-      const file = path.join(dir, n), m = fs.statSync(file).mtimeMs;
-      if (!best || m > best.m) best = { id: n.slice(0, -6), file, m };
-    }
-  } catch {}
-  return best && { id: best.id, file: best.file };
+  const codex = codexFiles(0, id)[0];
+  return { id, file: codex?.file || null };
 }
 
 /** A session's screens as the canvas shows them, its subagents' included, newest first. */
 export async function screensFor({ id, file }) {
-  if (!file) return [];
+  const shared = sharedScreens(id);
+  if (!file) return shared;
   const files = [file];
   const sub = path.join(path.dirname(file), id, "subagents");
   try { for (const n of fs.readdirSync(sub)) if (n.endsWith(".jsonl")) files.push(path.join(sub, n)); } catch {}
-  const all = [];
+  const all = [...shared];
   for (const f of files) { const s = await readTranscript(f, id); if (s) all.push(...screensOf(s)); }
   return all.sort((a, b) => b.at - a.at);
 }

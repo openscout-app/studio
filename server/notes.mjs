@@ -12,6 +12,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { HOME, IMG, NOTES, findScout } from "./paths.mjs";
+import { portable } from "./shared-screens.mjs";
 import { isOpen, stateOf } from "./sessions.mjs";
 import { materialize } from "./transcripts.mjs";
 
@@ -87,14 +88,18 @@ export async function deliver(id) {
   const n = load().find((x) => x.id === id);
   if (!n || carrying.has(id)) return;
   const last = n.trail.at(-1)?.what;
-  if (last === "sent" || last === "handed" || n.kept) return;
-  if (!isOpen(n.session)) {
+  if (["sent", "handed", "available"].includes(last) || n.kept || n.readAt) return;
+  if (portable(n.session) || (n.harness && n.harness !== "claude" && n.harness !== "codex")) {
+    update(id, x => step(x, { what: "available" }));
+    return;
+  }
+  if (n.harness !== "codex" && !isOpen(n.session)) {
     update(id, (x) => step(x, { what: "waiting" }));
     return;
   }
   carrying.add(id);
   try {
-    const { json, err } = await scout(["session", "send", n.session, message(n)]);
+    const { json, err } = await scout(["session", "send", n.session, message(n), ...(n.harness === "codex" ? ["--harness", "codex"] : [])]);
     update(id, (x) => {
       if (json?.ok) { step(x, { what: "sent", how: json.delivery || json.route || json.host || null }); x.sentAt = Date.now(); }
       else if (json?.code === "not_live") step(x, { what: "waiting" });
@@ -106,7 +111,7 @@ export async function deliver(id) {
 /** Give a note to a new Claude session in the note's repo, through Scout. */
 export async function handOff(id) {
   const n = load().find((x) => x.id === id);
-  if (!n) return null;
+  if (!n || portable(n.session) || (n.harness && n.harness !== "claude")) return null;
   const { json, err } = await scout(["ask", "--project", n.cwd, "--harness", "claude", "--label", "scout-studio", message(n)], 120e3);
   const ok = json && json.ok !== false && json.receipt?.ok !== false;
   return update(id, (x) => {
@@ -119,15 +124,34 @@ export async function handOff(id) {
 export async function notes() {
   return Promise.all(load().map(async (n) => {
     const s = n.trail.some((t) => t.what === "sent") ? await stateOf(n.session) : null;
-    return { ...n, arrivedAt: s?.arrived[n.id] || null, answers: s?.answers[n.id] || [] };
+    return { ...n, arrivedAt: n.readAt || s?.arrived[n.id] || null, answers: [...(s?.answers[n.id] || []), ...(n.directAnswers || [])].sort((a, b) => a.at - b.at) };
   }));
 }
 
-export function addNote({ session, project, cwd, screen, x, y, text, re, reSay }) {
-  if (!session || !screen?.hash || typeof text !== "string" || !text.trim()) return null;
+// Read and acknowledge only notes addressed to this conversation.
+export function feedback(session, note, reply) {
+  if (!session || typeof session !== "string") throw Error("Choose a session.");
+  const list = load();
+  const mine = list.filter(n => n.session === session);
+  if (note !== undefined || reply !== undefined) {
+    const n = mine.find(n => n.id === note);
+    if (!n || typeof reply !== "string" || !reply.trim()) throw Error("Give a note from this session and a reply.");
+    const text = reply.trim().slice(0, 4000);
+    n.directAnswers ||= [];
+    if (n.directAnswers.at(-1)?.text !== text) n.directAnswers.push({ text, at: Date.now() });
+  }
+  const unread = mine.filter(n => !n.readAt);
+  for (const n of unread) n.readAt = Date.now();
+  if (unread.length || note) save(list);
+  return mine.map(n => ({ id: n.id, text: n.text, screen: n.screen, x: n.x, y: n.y, at: n.at,
+    pointer: n.re, answering: n.reSay, replies: n.directAnswers || [] }));
+}
+
+export function addNote({ session, harness, project, cwd, screen, x, y, text, re, reSay }) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(session || "") || !screen?.hash || typeof text !== "string" || !text.trim()) return null;
   const n = {
     id: `n_${crypto.randomBytes(5).toString("hex")}`,
-    session, project: project || "", cwd: cwd || "",
+    session, harness, project: project || "", cwd: cwd || "",
     screen: { hash: screen.hash, ext: screen.ext || "png", w: screen.w, h: screen.h, url: screen.url || null, file: screen.file || null },
     x: Math.min(1, Math.max(0, Number(x) || 0)), y: Math.min(1, Math.max(0, Number(y) || 0)),
     text: text.trim().slice(0, 4000), at: Date.now(), trail: [],
@@ -153,7 +177,7 @@ export function startSweep() {
     for (const n of load()) {
       const last = n.trail.at(-1)?.what;
       // a send Scout keeps refusing stops after six tries; Retry starts it again
-      if (!n.kept && last !== "sent" && last !== "handed" && !(last === "failed" && n.tries >= 6)) deliver(n.id);
+      if (!n.kept && !n.readAt && last !== "available" && last !== "sent" && last !== "handed" && !(last === "failed" && n.tries >= 6)) deliver(n.id);
     }
   }, 20e3);
   timer.unref?.();

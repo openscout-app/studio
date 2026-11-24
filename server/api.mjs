@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { IMG } from "./paths.mjs";
 import { materialize } from "./transcripts.mjs";
 import { canvas } from "./sessions.mjs";
-import { addNote, handOff, keep, notes, remove, retry, startSweep } from "./notes.mjs";
+import { addNote, feedback, handOff, keep, notes, remove, retry, startSweep } from "./notes.mjs";
 import { addPointer, markSeen, pointer, pointersOf, screensOf } from "./pointers.mjs";
 import { showById, showBytes, showsFor, viewOf } from "./runtime.mjs";
 import { viewResponse } from "./show-view.mjs";
@@ -109,6 +109,11 @@ export async function handle(req, res) {
     if (p === "/api/notes" && req.method === "POST") {
       const n = addNote(await body(req));
       return send(res, n ? 200 : 400, n ? { note: n } : { error: "a note needs a session, a screen and some words" }), true;
+    }
+    if (p === "/api/feedback" && req.method === "POST") {
+      const { session, note, reply } = await body(req);
+      try { return send(res, 200, { notes: feedback(session, note, reply) }), true; }
+      catch (e) { return send(res, 400, { error: e.message }), true; }
     }
     const m = p.match(/^\/api\/notes\/(n_[a-z0-9]+)(?:\/(handoff|retry|keep))?$/);
     if (m && req.method === "POST" && m[2] === "handoff") return send(res, 200, { note: await handOff(m[1]) }), true;

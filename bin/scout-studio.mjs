@@ -1,95 +1,53 @@
 #!/usr/bin/env node
-// npx github:openscout-app/studio [--port 4801] [--no-open]     start Scout Studio and open it
-// npx github:openscout-app/studio setup        start Scout, give Claude Code the tools (or: init)
-// npx github:openscout-app/studio mcp                            the tools themselves (Claude Code runs this)
-// npx github:openscout-app/studio link --at x,y --say "…"        point the person at a spot, from a shell
-//
-// Starting: if Scout Studio already runs on the port, it opens that one; if something else holds
-// the port, it takes the next free one.
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
+import { callerSession, shareScreen } from "../server/shared-screens.mjs";
+import { setupStudio } from "../server/setup.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const BIN = fileURLToPath(import.meta.url);
-// how people run it: straight from the open repository on GitHub
-const SPEC = "github:openscout-app/studio";
 const HELP = `Usage:
-  scout-studio [--port <n>] [--no-open]
-      Show what your Claude Code sessions made, on Scout's canvas, at http://localhost:4801.
-
+  scout-studio [--port <n>] [--no-open] [--no-setup]
+      Open the local canvas, connect installed hosts and start Scout if needed.
   scout-studio setup [--print] [--no-scout]
-      Start Scout's runtime if it isn't up (scout setup; Scout comes with Scout Studio, and its
-      runtime runs on Bun), which carries notes to your sessions. Then give every Claude Code session
-      the Scout Studio tools (screens, point, pointers), so an agent can show you a precise spot
-      on a screen it took. --print shows the tools command instead; --no-scout leaves Scout alone.
-
-  scout-studio mcp
-      The tools, as an MCP server over stdio. Claude Code runs this; you don't need to.
-
+      Check connections again. --print previews host registration commands.
+  scout-studio mcp [--host <harness>]
+      Serve Studio tools over stdio.
+  scout-studio share <image> --host <harness> [--session <id>] [--caption <text>]
+      Share a local screenshot. Reuse the returned handle in this conversation.
+  scout-studio feedback --session <id> [--note <id> --reply <text>]
+      Read pinned notes or answer a note on this canvas.
   scout-studio link [--screen <id|latest>] (--at <x,y> | --box <x,y,w,h>) [--fraction] --say <text> [--session <id>] [--open]
-      From a shell in a Claude Code session: point the person at a spot and print the link.
-      Coordinates are pixels of the screenshot, or 0 to 1 with --fraction.`;
+      Print a link to a spot on the screen.`;
 if (args.includes("--help") || args.includes("-h")) { console.log(HELP); process.exit(0); }
 const fail = (m) => { console.error(`scout-studio: ${m}`); process.exit(1); };
-
-/** Scout carries notes into sessions. Scout Studio brings its CLI; its runtime runs on Bun. Start it if
- * it isn't up. */
-async function setupScout() {
-  const { findScout, findBun, RUNTIME } = await import("../server/paths.mjs");
-  const up = await fetch(`${RUNTIME}/v1/tail/discover`, { signal: AbortSignal.timeout(3e3) }).then((r) => r.ok, () => false);
-  if (up) { console.log("Scout is up."); return; }
-  const bun = findBun(), scout = findScout();
-  if (!bun) {
-    console.log("Scout carries notes to your sessions. Its runtime runs on Bun, which isn't on this Mac.\n" +
-      "Install Bun (curl -fsSL https://bun.sh/install | bash), then run this again.\n" +
-      "The canvas works meanwhile; notes wait for Scout.\n");
-    return;
-  }
-  if (!scout) { console.log("Scout's CLI didn't come with Scout Studio. Reinstall, or see https://openscout.app/install.md.\n"); return; }
-  console.log("Starting Scout: scout setup");
-  const env = { ...process.env, PATH: `${path.dirname(bun)}:${process.env.PATH || ""}` };
-  try { execFileSync(scout, ["setup"], { stdio: "inherit", env }); console.log(""); } catch {
-    console.log("scout setup didn't finish. Run scout doctor to see why. The canvas works meanwhile; notes wait for Scout.\n");
-  }
-}
 
 if (args[0] === "mcp") {
   const { serveMcp } = await import("../server/mcp.mjs");
   serveMcp();
 } else if (args[0] === "setup" || args[0] === "init") {
-  // from npx the package sits in a cache that can go away, so name the package, not the path
-  const viaNpx = BIN.includes(`${path.sep}_npx${path.sep}`);
-  const run = viaNpx ? ["npx", "-y", SPEC, "mcp"] : [process.execPath, BIN, "mcp"];
-  const add = ["mcp", "add", "--scope", "user", "scout-studio", "--", ...run];
-  const shown = `claude ${add.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ")}`;
-  if (args.includes("--print")) { console.log(shown); process.exit(0); }
-  if (!args.includes("--no-scout")) await setupScout();
-  let has = false;
-  try { execFileSync("claude", ["mcp", "get", "scout-studio"], { stdio: "ignore" }); has = true; } catch (e) {
-    if (e.code === "ENOENT") fail(`the claude command isn't on PATH. Run this where it is:\n  ${shown}`);
-  }
-  if (has) {
-    console.log("Claude Code already has the Scout Studio tools. To set them up again: claude mcp remove --scope user scout-studio, then this again.");
-    process.exit(0);
-  }
-  try { execFileSync("claude", add, { stdio: "inherit" }); } catch { fail(`that didn't work. The command was:\n  ${shown}`); }
-  // The tools' name before Scout Canvas became Scout Studio. Left in place, every session would
-  // get each tool twice, so the old registration goes once the new one is in.
+  await setupStudio(BIN, { print: args.includes("--print"), scout: !args.includes("--no-scout") });
+} else if (args[0] === "share" || args[0] === "feedback") {
   try {
-    execFileSync("claude", ["mcp", "get", "scout-canvas"], { stdio: "ignore" });
-    execFileSync("claude", ["mcp", "remove", "--scope", "user", "scout-canvas"], { stdio: "ignore" });
-    console.log("Removed the tools' old registration, scout-canvas.");
-  } catch {}
-  console.log("\nDone. New Claude Code sessions have screens, point and pointers. Sessions already open get them after /mcp or a restart.");
+    const host = opt("--host") || (process.env.CODEX_THREAD_ID ? "codex" : process.env.CLAUDE_CODE_SESSION_ID ? "claude" : "");
+    const session = callerSession(opt("--session"), process.env, host);
+    if (args[0] === "share") {
+      const receipt = shareScreen({ file: args[1], session, host, caption: opt("--caption") });
+      console.log(JSON.stringify(receipt));
+    } else {
+      if (!session) fail("Pass the session handle returned by share.");
+      const { ensure, call } = await import("../server/local.mjs");
+      console.log(JSON.stringify(await call(await ensure(), "POST", "/api/feedback", { session, note: opt("--note"), reply: opt("--reply") })));
+    }
+  } catch (e) { fail(e.message); }
 } else if (args[0] === "link") {
   const { ensure, call } = await import("../server/local.mjs");
-  const { findSession } = await import("../server/link.mjs");
-  const session = opt("--session") || findSession()?.id;
-  if (!session) fail("no Claude Code session here. Run it from a session, or pass --session <id>.");
+  let session;
+  try { session = callerSession(opt("--session"), process.env, opt("--host")); } catch (e) { fail(e.message); }
+  if (!session) fail("Pass this conversation’s session ID or the handle returned by share.");
   const nums = (s, n) => {
     const v = String(s || "").split(",").map((x) => Number(x.trim()));
     if (v.length !== n || v.some((x) => !Number.isFinite(x))) fail(`expected ${n} numbers separated by commas, not "${s}"`);
@@ -128,10 +86,11 @@ if (args[0] === "mcp") {
         const url = `http://localhost:${port}`;
         console.log(`Scout Studio is already running at ${url}`);
         show(url);
-        process.exit(0);
+        break;
       }
       if (asked) fail(`port ${port} is taken. Try another --port.`);
       if (port === first + 9) fail(`ports ${first} to ${port} are all taken. Use --port <n>.`);
     }
   }
+  if (!args.includes("--no-setup")) await setupStudio(BIN);
 }

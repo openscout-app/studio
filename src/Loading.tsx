@@ -16,7 +16,7 @@ function steps(data: CanvasData | null, hours: number, ready: boolean, returning
       warn: !!data && !data.scout.up,
     },
     {
-      label: "Finding your Claude sessions", done: !!data,
+      label: "Finding your sessions", done: !!data,
       detail: data ? `${data.loading.sessions} ${data.loading.sessions === 1 ? "session" : "sessions"} ${window}` : undefined,
     },
     {
@@ -49,7 +49,7 @@ export function Arrival({ data, error, hours, filtered, ready, returning, landed
   if (error && !data) return <Message title="The canvas couldn't load" text={error} />;
   if (empty && checked >= 2) {
     return <>
-      <Message title="No screens here" text={filtered ? "Nothing matches. Clear the search, or show more with the controls at the top right." : `No Claude Code session took a screen ${steps(data, hours, false)[1].detail?.replace(/^\d+ sessions? /, "")}.`} />
+      <Message title="No screens here" text={filtered ? "Nothing matches. Clear the search, or show more with the controls at the top right." : `No session shared a screen ${steps(data, hours, false)[1].detail?.replace(/^\d+ sessions? /, "")}.`} />
       {controls}
     </>;
   }
