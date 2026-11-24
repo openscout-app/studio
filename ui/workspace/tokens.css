@@ -1,0 +1,60 @@
+/* Scout’s standalone scales and its mixed typography voice. Host themes can override these defaults. */
+:where(:root) {
+  /* spacing */
+  --space-3xs: 2px;
+  --space-2xs: 4px;
+  --space-xs: 6px;
+  --space-sm: 8px;
+  --space-md: 10px;
+  --space-lg: 12px;
+  --space-xl: 14px;
+  --space-2xl: 16px;
+  --space-3xl: 20px;
+  --space-4xl: 24px;
+  --space-5xl: 32px;
+
+  /* radius */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* type */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-weight-body: 300;
+  --text-3xs: 8px;
+  --text-2xs: 9px;
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-md: 12px;
+  --text-lg: 13px;
+  --text-xl: 14px;
+  --text-2xl: 15px;
+  --text-3xl: 17px;
+  --text-4xl: 19px;
+  --text-5xl: 22px;
+  --text-6xl: 26px;
+  --leading-none: 1;
+  --leading-normal: 1.5;
+  --leading-display: 1.12;
+  --leading-tight: 1.35;
+  --leading-snug: 1.45;
+  --tracking-sm: 0.04em;
+
+  /* motion */
+  --motion-fast: 120ms;
+  --motion-state: 220ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  /* layout */
+  --scout-top-row: 40px;
+  --scout-pane-band: 32px;
+  --scout-pane-title-size: var(--text-xs);
+  --scout-pane-title-weight: 400;
+
+  /* Scout's mixed voice preserves the casing of names and labels. */
+  --voice-case: none;
+  --voice-track: normal;
+}

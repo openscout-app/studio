@@ -129,6 +129,10 @@ The tools read Claude Code transcripts on this host. In a Codex thread or on a C
 
 ## Checks
 
+The [workspace UI package](ui/workspace/README.md) in this repository supplies
+Scout's shared app frame, typography, and navigation. It has React bindings and
+an asset generator for standalone pages that serve plain HTML.
+
 ```sh
 npm test           # pairing, image sizes, prompt cleanup
 npx tsc --noEmit

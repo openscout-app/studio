@@ -1,0 +1,35 @@
+@import "./tokens.css";
+.scout-nav-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+.scout-nav-tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: var(--space-xs) var(--space-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-none);
+  letter-spacing: var(--voice-track);
+  text-transform: var(--voice-case);
+  font-weight: var(--font-weight-body);
+  text-decoration: none;
+  white-space: nowrap;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--scout-chrome-ink-faint, var(--hud-muted));
+  cursor: pointer;
+  transition: color var(--motion-duration-hover, 120ms) ease, border-color var(--motion-duration-hover, 120ms) ease;
+}
+.scout-nav-tab:hover { color: var(--scout-chrome-ink, var(--hud-ink)); }
+.scout-nav-tab.active {
+  color: var(--scout-chrome-ink-strong, var(--hud-ink));
+  border-bottom-color: var(--hud-accent, currentColor);
+}
+.scout-nav-tab:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
