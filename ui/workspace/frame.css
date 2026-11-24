@@ -1,0 +1,41 @@
+/* Shared standalone chrome. Each product supplies its own surface and ink tokens. */
+@import "./tokens.css";
+:root { --scout-header-height: var(--scout-top-row); }
+scout-app-shell {
+  display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 100svh;
+}
+scout-app-shell > :where(main, div) { min-width: 0; min-height: 0; }
+scout-app-frame > [slot="center"] {
+  position: absolute; left: 50%; transform: translateX(-50%); width: min(48%, 600px);
+}
+@media (max-width: 720px) {
+  scout-app-frame:has(> [slot="center"]) { height: auto; min-height: var(--scout-header-height); padding-block: 8px; flex-wrap: wrap; }
+  scout-app-frame > [slot="center"] { position: static; transform: none; width: 100%; }
+}
+scout-app-frame {
+  box-sizing: border-box; position: sticky; top: 0; z-index: 12; height: var(--scout-header-height);
+  display: flex; align-items: center; gap: var(--space-lg); padding: 0 var(--space-2xl);
+  color: var(--ink, var(--hud-ink, CanvasText)); background: var(--ground, var(--bg, var(--hud-bg, Canvas)));
+  border-bottom: 1px solid var(--line, var(--hud-line, color-mix(in srgb, currentColor 16%, transparent)));
+  font: var(--font-weight-body) var(--text-lg)/var(--leading-tight) var(--font-sans);
+}
+scout-logo, scout-app-frame::part(brand) {
+  display: inline-flex; align-items: center; gap: 5px; flex: none; white-space: nowrap;
+  font: var(--font-weight-body) var(--text-2xl)/var(--leading-none) var(--font-sans); letter-spacing: var(--voice-track);
+}
+.scout-header-end { margin-inline-start: auto; }
+scout-side-nav { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: auto; }
+scout-side-nav .scout-nav-item {
+  border-radius: 4px; cursor: pointer; text-align: start;
+}
+scout-side-nav .scout-nav-item:hover {
+  background: var(--hover, color-mix(in srgb, currentColor 4%, transparent));
+}
+scout-side-nav .scout-nav-item:is([aria-current="page"], [aria-current="true"], :has(input:checked)) {
+  color: var(--ink, var(--hud-ink, CanvasText));
+  background: var(--selected, color-mix(in srgb, currentColor 7%, transparent));
+}
+scout-side-nav :where(a, button, select, input):focus-visible {
+  outline: 2px solid var(--hud-accent, var(--accent, currentColor)); outline-offset: 2px;
+}
+@media (max-width: 540px) { scout-app-frame { gap: 6px; padding-inline: 10px; } }
