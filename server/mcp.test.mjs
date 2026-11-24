@@ -23,7 +23,7 @@ test("screens and point carry the view; screen_image is for the view only", asyn
   assert.equal(by.pointers._meta, undefined);
   assert.deepEqual(by.screen_image._meta.ui.visibility, ["app"]);
   assert.ok(VIEW_URI.startsWith("ui://"));
-  assert.equal(TOOLS.length, 4);
+  assert.ok(by.share_screen && by.feedback);
 });
 
 test("the view is listed and read as an MCP App page", async () => {

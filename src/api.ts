@@ -5,7 +5,7 @@ export type Screen = {
   before: { hash: string; ext: string; at: number } | null; open: boolean;
 };
 export type Session = {
-  id: string; cwd: string; branch: string; title: string; prompt: string;
+  id: string; harness?: string; cwd: string; branch: string; title: string; prompt: string;
   firstAt: number; lastAt: number; open: boolean; working: boolean; attention: unknown;
   /** what it did last, in a few words */
   now: string | null;
@@ -25,7 +25,7 @@ export type Project = { name: string; root: string; sessions: Session[] };
 export type Loading = { done: boolean; first: boolean; read: number; total: number; sessions: number };
 export type CanvasData = { at: number; hours: number; scout: { up: boolean; url?: string; shows?: number }; projects: Project[]; loading: Loading };
 
-export type Step = { what: "waiting" | "failed" | "sent" | "handed"; at: number; why?: string; how?: string | null; task?: string | null };
+export type Step = { what: "available" | "waiting" | "failed" | "sent" | "handed"; at: number; why?: string; how?: string | null; task?: string | null };
 export type Note = {
   id: string; session: string; project: string; cwd: string;
   screen: { hash: string; ext: string; w: number; h: number; url: string | null; file: string | null };
@@ -52,7 +52,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 export const api = {
   canvas: (hours: number) => call<CanvasData>("GET", `/api/canvas?hours=${hours}`),
   notes: () => call<{ notes: Note[] }>("GET", "/api/notes").then((r) => r.notes),
-  add: (n: { session: string; project: string; cwd: string; screen: Screen; x: number; y: number; text: string; re?: string; reSay?: string }) => call<{ note: Note }>("POST", "/api/notes", n),
+  add: (n: { session: string; harness?: string; project: string; cwd: string; screen: Screen; x: number; y: number; text: string; re?: string; reSay?: string }) => call<{ note: Note }>("POST", "/api/notes", n),
   pointer: (id: string) => call<{ pointer: Pointer }>("GET", `/api/pointers/${id}`),
   seen: (id: string) => call("POST", `/api/pointers/${id}/seen`),
   handOff: (id: string) => call("POST", `/api/notes/${id}/handoff`),

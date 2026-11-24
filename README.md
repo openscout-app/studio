@@ -2,7 +2,7 @@
 
 What your agents make, on Scout's canvas. Pin a note on a screen, and Scout takes it to the session that made the screen.
 
-Each repository is a frame, each Claude Code session is an area, and the screens a session took are cards, newest first. Open a screen to see it full size. When the session took the same view earlier, a wipe lays the before over the after. Click or right-click anywhere on a screen to pin a note there. Scout delivers the note into that session, and the session's answer shows beside the note as a thread.
+Each repository is a frame, each session is an area, and the screens a session took are cards, newest first. Open a screen to see it full size. When the session took the same view earlier, a wipe lays the before over the after. Click or right-click anywhere on a screen to pin a note there. Scout delivers the note into that session, and the session's answer shows beside the note as a thread.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/studio-dark.png">
@@ -17,15 +17,9 @@ npx github:openscout-app/studio
 
 That's all. It fetches Scout Studio from this repository, builds it, and opens http://localhost:4801. Add `--no-open` to skip the browser, or `--port <n>` for another port. If Scout Studio is already running, the command opens it. If something else holds the port, it takes the next free one.
 
-To send notes into your sessions, and to give agents the Scout Studio tools, set up once:
+On launch Studio checks for Codex, Antigravity CLI (`agy`), Claude Code, Cursor, Grok, Hermes and OpenCode. It registers its tools with each installed CLI that needs them. Start a new agent session to pick up the tools. Use `--no-setup` to open only the canvas. The optional `setup --print` command previews the registrations.
 
-```sh
-npx github:openscout-app/studio setup
-```
-
-Scout Studio depends on [Scout](https://github.com/openscout-app/scout) (`@openscout/scout`) and brings its CLI along. `setup` starts Scout's runtime if it isn't up (`scout setup`), then registers the tools with Claude Code (see [Let agents point you at a screen](#let-agents-point-you-at-a-screen)). Scout's runtime runs on [Bun](https://bun.sh) 1.4.4 or newer; if Bun is missing, `setup` says how to get it. A Scout you installed yourself is used first.
-
-You need macOS, Node 20 or newer, and Claude Code. Without Scout's runtime, the canvas still shows every session and screen; notes are kept and wait until Scout is up.
+Studio runs on macOS with Node 20 or newer. It uses [Scout](https://github.com/openscout-app/scout) to deliver notes into live Claude Code and Codex sessions. If the local runtime is down, Studio tries to start it. The runtime requires Bun 1.4.4 or newer. The canvas and explicit feedback tools work without it.
 
 From a clone:
 
@@ -45,7 +39,20 @@ Studio uses:
 
 ## Where screens come from
 
-The canvas reads Claude Code transcripts in `~/.claude/projects` written in the chosen window: 4 hours, 24 hours or 3 days. It opens on the last 4 hours (or the window `?hours=24` or `?hours=72` in the address names) and looks further back on its own when that holds no screens; a link to an older session widens it as far as it needs, up to a week. A screen is any image of at least 320 by 200 that a tool returned: a browser screenshot, a window screenshot, or an image file the session read. Subagents' screens belong to the session that started them. The images are copied out of the transcripts into `~/.openscout/.studio/img`, so they outlive temporary files.
+The canvas reads Claude Code transcripts in `~/.claude/projects` and Codex rollouts in `$CODEX_HOME/sessions` (default `~/.codex/sessions`) written in the chosen window: 4 hours, 24 hours or 3 days. It opens on the last 4 hours (or the window `?hours=24` or `?hours=72` in the address names) and looks further back on its own when that holds no screens; a link to an older session widens it as far as it needs, up to a week. A screen is any image of at least 320 by 200 that a tool returned: a browser screenshot, a window screenshot, or an image file the session read. Subagents' screens belong to the session that started them. The images are copied out of the transcripts into `~/.openscout/.studio/img`, so they outlive temporary files.
+
+## Share a screen
+
+Antigravity, Cursor, Grok, pi, Hermes, OpenCode, Kimi and other local agents can share a screenshot from a shell. With MCP, use the equivalent `share_screen` tool. The first share returns a session handle. Keep it in the conversation and pass it to each later share, pointer or feedback call.
+
+```sh
+npx github:openscout-app/studio share ./review.png --host antigravity --caption "Navigation after the change"
+npx github:openscout-app/studio link --session <handle> --at 120,80 --say "The menu opens here"
+npx github:openscout-app/studio feedback --session <handle>
+npx github:openscout-app/studio feedback --session <handle> --note <note-id> --reply "I moved the menu."
+```
+
+Use the name of your harness for `--host`. These agents read pins with `feedback`. There is no need for access to their conversation logs. For another local stdio MCP client, register `npx` with arguments `-y github:openscout-app/studio mcp --host <harness>`. The client and Studio need access to the same local files.
 
 ## Shown files, from Scout's runtime
 
@@ -73,7 +80,7 @@ The two must also have about the same shape. A screen with no address, window, o
 
 ## Notes
 
-A note goes out at once when its session is open. A closed session's note waits, and Scout tries again every 20 seconds. **Hand to a new session** gives the note to a new Claude session in the same repository (`scout ask --project`). A send that Scout refuses is retried six times, then stops until **Retry**.
+For Claude Code and Codex, Scout tries to deliver the note to the live session. For explicitly shared sessions, the agent reads the note and replies with `feedback`. A closed session's note waits, and Scout tries again every 20 seconds. **Hand to a new session** gives the note to a new Claude session in the same repository (`scout ask --project`). A send that Scout refuses is retried six times, then stops until **Retry**.
 
 The message carries a marker (`[scout-studio:n_…]`). The canvas finds the marker in the session's transcript, which shows that the note arrived, and it shows what the session said after it.
 
@@ -83,21 +90,17 @@ Notes are kept in `~/.openscout/.studio/notes.json` (`SCOUT_STUDIO_HOME` moves t
 
 An agent can show you one spot or area on a screenshot it took, with what it wants you to know about it. You get a short link. It opens that screen with the spot marked and the agent's words beside it. Your reply goes back to the session with the words it answers.
 
-Set it up once:
-
-```sh
-npx github:openscout-app/studio setup
-```
-
-This gives every new Claude Code session three tools. The session already knows which session it is (Claude Code passes `CLAUDE_CODE_SESSION_ID` to its tools), so the agent never names one.
+Studio registers these tools on launch. When the host passes a Claude Code or Codex session ID, the tools use it. Otherwise, supply this conversation’s ID or the handle from `share_screen`.
 
 | Tool | What the agent gets |
 | --- | --- |
+| `share_screen` | Share a local screenshot and get the session handle. |
+| `feedback` | Read this session’s pinned notes or reply to a specific note. |
 | `screens` | Its recent screenshots, newest first: an id, the size in pixels, the page or file, and what it said around each. |
 | `point` | A link such as `http://localhost:4801/p/p_f5e3a858fe`. The agent gives a screen id (or `latest`), a point `x, y` in pixels of the screenshot, or an area `x, y, w, h`, and `say`. |
 | `pointers` | What it pointed at, whether you opened each, and your replies. |
 
-If Scout Studio isn't running, the first tool call starts it in the background.
+The screen list, pointer and feedback tools start Studio in the background when needed. A shared screenshot is saved locally and appears when the canvas opens.
 
 A pointer keeps its screen as it was. The link opens the same screen at the same spot, even after the session takes more screens or the canvas folds screens of the same page together. Pointers are kept in `~/.openscout/.studio/pointers.json`.
 
@@ -114,7 +117,7 @@ Scout Studio also remembers where you were. When you open it again, the session 
 
 ### In the thread, as a plugin
 
-The same three tools also come as a plugin, in `plugin/`, listed in the `openscout` marketplace. In an app that draws MCP Apps, such as T3 Code, `screens` shows the session's screens as cards under the call, and `point` shows the screen with the spot marked and a box to reply in. Other apps show the tool's text, as before.
+The same tools also come as a plugin, in `plugin/`, listed in the `openscout` marketplace. In an app that draws MCP Apps, such as T3 Code, `screens` shows the session's screens as cards under the call, and `point` shows the screen with the spot marked and a box to reply in. Other apps show the tool's text, as before.
 
 | App | Install |
 | --- | --- |
@@ -123,9 +126,7 @@ The same three tools also come as a plugin, in `plugin/`, listed in the `opensco
 | T3 Code | Runs Claude Code, so install it for Claude Code. |
 | Capy | Add `https://github.com/openscout-app/studio/tree/main/plugin` as a plugin. |
 
-The plugin and `setup` register the same server. Keep one: after you install the plugin, run `claude mcp remove scout-studio --scope user`.
-
-The tools read Claude Code transcripts on this host. In a Codex thread or on a Capy cloud machine they load, but they find no session.
+The plugin and launcher expose the same tools. If you add a plugin after standalone registration, remove the standalone entry through that host’s MCP settings.
 
 ## Checks
 

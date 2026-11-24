@@ -1,18 +1,10 @@
-// Scout Studio as an MCP server, for the Claude Code session it runs under. Claude Code starts it
-// with the session's id in CLAUDE_CODE_SESSION_ID, so every tool speaks for exactly that session.
-//
-// Tools:
-//   screens       this session's recent screens, newest first, with the id to point at
-//   point         show the person one spot or area on a screen, with what to say; returns a link
-//   pointers      this session's pointers: whether the person opened each, and what they replied
-//   screen_image  one screen as a JPEG, for the view below; hosts keep it from the model
-//
+// Local Studio tools over stdio. The host ID or an explicit share handle identifies the session.
 // `screens` and `point` also carry a view (an MCP App, ./mcp-view.mjs). A host that draws MCP Apps
 // shows it under the tool call; every other host reads the same text it always did.
 //
 // Plain JSON-RPC over stdio, one message per line; no dependencies.
 import readline from "node:readline";
-import { findSession } from "./link.mjs";
+import { callerSession, shareScreen } from "./shared-screens.mjs";
 import { call, ensure } from "./local.mjs";
 import { VIEW_HTML, VIEW_MIME, VIEW_URI } from "./mcp-view.mjs";
 
@@ -20,21 +12,35 @@ const VERSION = "0.2.0";
 const EXTS = ["png", "jpg", "webp", "gif"];
 const view = { ui: { resourceUri: VIEW_URI } };
 
+const sessionInput = { type: "string", description: "This conversation's native ID or the handle returned by share_screen." };
 export const TOOLS = [
+  {
+    name: "share_screen",
+    description: "Share a local screenshot. Keep the returned session handle for later shares, pointers and feedback in this conversation.",
+    inputSchema: { type: "object", required: ["file"], properties: {
+      file: { type: "string", description: "Absolute path to the screenshot." }, caption: { type: "string" },
+      harness: { type: "string", description: "Name of your harness if the server was registered manually." }, session: sessionInput } },
+  },
+  {
+    name: "feedback",
+    description: "Read this session's pinned notes, or answer one with its note ID and a reply.",
+    inputSchema: { type: "object", properties: { session: sessionInput, note: { type: "string" }, reply: { type: "string" } } },
+  },
   {
     name: "screens",
     description: "List the screenshots this session has taken, newest first, as Scout Studio shows them to the person. Each has an id to pass to `point`, its size in pixels, the page or file it shows, and what you said around it.",
-    inputSchema: { type: "object", properties: { limit: { type: "number", description: "How many, newest first. Default 12." } } },
+    inputSchema: { type: "object", properties: { session: sessionInput, limit: { type: "number", description: "How many, newest first. Default 12." } } },
     annotations: { readOnlyHint: true },
     _meta: view,
   },
   {
     name: "point",
-    description: "Show the person one spot or area on a screenshot you took, with what you want to say about it. Returns a short link to give them; it opens Scout Studio on that screen with the spot marked and your words beside it, and they can reply there. Their reply comes back to this session as a message. Give x and y in pixels of the screenshot as you saw it (or unit \"fraction\"); add w and h to mark an area instead of a point.",
+    description: "Show the person one spot or area on a screenshot you took, with what you want to say about it. Returns a short link to give them; it opens Scout Studio on that screen with the spot marked and your words beside it, and they can reply there. Use feedback to read their reply. Give x and y in pixels of the screenshot as you saw it (or unit \"fraction\"); add w and h to mark an area instead of a point.",
     inputSchema: {
       type: "object",
       required: ["x", "y", "say"],
       properties: {
+        session: sessionInput,
         screen: { type: "string", description: "A screen id from `screens`, or \"latest\" (the default)." },
         x: { type: "number", description: "Left of the spot or area." },
         y: { type: "number", description: "Top of the spot or area." },
@@ -49,7 +55,7 @@ export const TOOLS = [
   {
     name: "pointers",
     description: "List what this session has pointed the person at, newest first: the link, whether they opened it, and their replies.",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: { type: "object", properties: { session: sessionInput } },
     annotations: { readOnlyHint: true },
   },
   {
@@ -73,7 +79,8 @@ export const RESOURCES = [
   { uri: VIEW_URI, name: "Scout Studio view", description: "This session's screens, or one screen with a spot marked.", mimeType: VIEW_MIME },
 ];
 
-const session = () => process.env.CLAUDE_CODE_SESSION_ID || findSession()?.id || null;
+const hostArg = process.argv.indexOf("--host");
+const configuredHost = hostArg >= 0 ? process.argv[hostArg + 1] : undefined;
 
 const when = (t) => {
   const s = Math.round((Date.now() - t) / 1000);
@@ -100,9 +107,18 @@ async function run(name, args = {}) {
     const data = Buffer.from(await res.arrayBuffer()).toString("base64");
     return { content: [{ type: "image", data, mimeType: res.headers.get("content-type") || "image/jpeg" }] };
   }
-  const sid = session();
-  if (!sid) throw new Error("no Claude Code session: CLAUDE_CODE_SESSION_ID isn't set and none was found in this folder");
+  const host = configuredHost || args.harness || (process.env.CODEX_THREAD_ID ? "codex" : process.env.CLAUDE_CODE_SESSION_ID ? "claude" : "");
+  const sid = callerSession(args.session, process.env, host);
+  if (name === "share_screen") {
+    const receipt = shareScreen({ file: args.file, caption: args.caption, session: sid, host: host || "agent" });
+    return text(JSON.stringify(receipt), receipt);
+  }
+  if (!sid) throw Error("Pass this conversation's session ID, or use share_screen first and keep its returned handle.");
   const base = await ensure();
+  if (name === "feedback") {
+    const data = await call(base, "POST", "/api/feedback", { session: sid, note: args.note, reply: args.reply });
+    return text(JSON.stringify(data.notes), data);
+  }
   if (name === "screens") {
     const { screens } = await call(base, "GET", `/api/screens?session=${encodeURIComponent(sid)}&limit=${Number(args.limit) || 12}`);
     const typed = screens.map((s) => ({ ...s, ext: s.ext || EXTS.find((e) => s.file?.toLowerCase().endsWith(`.${e}`)) }));
@@ -124,7 +140,7 @@ async function run(name, args = {}) {
       url,
       "",
       `Give the person this link. It opens screen ${p.screen.hash} (${p.screen.w}×${p.screen.h}, ${p.screen.url || p.screen.file || p.screen.tool}) with ${what} marked at ${Math.round(p.box.x * 100)}% across, ${Math.round(p.box.y * 100)}% down, and your words beside it.`,
-      "Their reply comes back to this session as a message; `pointers` shows whether they've opened it.",
+      "Use feedback to read their reply, or pointers to see whether they opened the link.",
     ].join("\n"), {
       kind: "pointer", base, session: sid, url,
       pointer: { id: p.id, box: p.box, say: p.say, screen: { hash: p.screen.hash, ext: p.screen.ext, w: p.screen.w, h: p.screen.h, url: p.screen.url, file: p.screen.file, tool: p.screen.tool } },

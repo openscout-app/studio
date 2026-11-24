@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const FIRST_PORT = 4801;
+export const FIRST_PORT = Number(process.env.SCOUT_STUDIO_PORT) || 4801;
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "scout-studio.mjs");
 
 /** Is Scout Studio answering on this port? */
@@ -24,7 +24,7 @@ export async function running(first = FIRST_PORT) {
 export async function ensure() {
   let port = await running();
   if (port) return `http://localhost:${port}`;
-  const child = spawn(process.execPath, [BIN, "--no-open"], { detached: true, stdio: "ignore" });
+  const child = spawn(process.execPath, [BIN, "--no-open", "--no-setup"], { detached: true, stdio: "ignore" });
   child.unref();
   for (let i = 0; i < 40 && !port; i++) { await new Promise((r) => setTimeout(r, 250)); port = await running(); }
   if (!port) throw new Error("Scout Studio didn't start. Run `npx github:openscout-app/studio` to see why.");

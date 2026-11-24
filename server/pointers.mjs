@@ -23,8 +23,8 @@ function save(list) {
 /** A session's screens, newest first, as an agent picks from them. */
 export async function screensOf(session, limit = 12) {
   if (!session) return null;
-  const s = findSession({ session, env: {} });
-  if (!s?.file) return null;
+  const s = findSession({ session });
+  if (!s) return null;
   return (await screensFor(s)).slice(0, limit).map(brief);
 }
 
@@ -53,8 +53,8 @@ export function boxOf({ x, y, w = 0, h = 0, unit = "px" }, screen) {
 /** Make a pointer. Throws with a reason a caller can act on. */
 export async function addPointer({ session, screen = "latest", at, say }) {
   if (!session) throw new Error("a pointer needs the session it comes from");
-  const s = findSession({ session, env: {} });
-  if (!s?.file) throw new Error(`no transcript for session ${session}`);
+  const s = findSession({ session });
+  if (!s) throw new Error("Invalid session.");
   const screens = await screensFor(s);
   if (!screens.length) throw new Error("this session has no screens yet; take a screenshot first");
   const sc = pickScreen(screens, screen);
@@ -63,7 +63,7 @@ export async function addPointer({ session, screen = "latest", at, say }) {
   if (!materialize(sc.hash, sc.ext)) throw new Error("couldn't keep a copy of that screen");
   const p = {
     id: `p_${crypto.randomBytes(5).toString("hex")}`,
-    session: s.id, cwd: parsed(s.file)?.cwd || "",
+    session: s.id, cwd: sc.cwd || parsed(s.file)?.cwd || "",
     screen: { hash: sc.hash, ext: sc.ext, w: sc.w, h: sc.h, at: sc.at, url: sc.url || null, file: sc.file || null, tool: sc.tool, caption: sc.caption || "" },
     box, say: typeof say === "string" ? say.trim().slice(0, 2000) : "", at: Date.now(), seenAt: null,
   };

@@ -21,5 +21,7 @@ Always give the person the link `point` returns, even when the host shows the vi
 
 ## Notes
 
-- Scout Studio reads Claude Code transcripts on this host, so the tools work in sessions that Claude Code runs (in a terminal, in T3 Code, or in another app that runs Claude Code). They run on macOS.
+- On macOS, Studio finds screenshots in Claude Code and Codex transcripts. Other local agents can share a screenshot file.
 - `point` needs a screenshot first. With none, take one, then point.
+
+For a local screenshot from another host, call `share_screen` with its file path. Keep the returned handle in this conversation and pass it as `session` to later calls. Call `feedback` to read pins or answer one by note ID.
