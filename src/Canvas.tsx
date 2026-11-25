@@ -160,10 +160,13 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened, o
     return m;
   }, [notes]);
 
-  // each session at work shows its cursor on the screen it took last
-  const working = useMemo(() => areas.filter((a) => a.session.working && a.cards.length).map((a) => {
-    const b = a.cards[0].box;
-    return { area: a, at: { x: b.x + b.w - 40, y: b.y + MEDIA_TIP } };
+  // Every session that touched a screen or Document Folio in this window gets a presence cursor:
+  // working (drifting + pulsing), open (resting + live), or recent (quiet + timestamped).
+  const present = useMemo(() => areas.flatMap((a) => {
+    const anchor = a.cards[0]?.box ?? a.shows[0]?.box;
+    if (!anchor) return [];
+    const state: "working" | "open" | "recent" = a.session.working ? "working" : a.session.open ? "open" : "recent";
+    return [{ area: a, state, at: { x: anchor.x + anchor.w - 36, y: anchor.y + MEDIA_TIP } }];
   }), [areas]);
 
   if (!cam) return <div className="viewport" ref={view} />;
@@ -186,11 +189,21 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened, o
         {frames.flatMap((f) => f.areas).filter((a) => inView(a.box)).map((a) => (
           <AreaView key={a.session.id} area={a} inView={inView} byScreen={byScreen} moved={moved} onOpen={onOpen} onMore={onMore} onShow={onShow} onFanOut={onFanOut} opened={opened.has(a.session.id)} />
         ))}
-        {working.filter((w) => inView(w.area.box)).map((w) => (
-          <AgentCursor harness={w.area.session.harness} key={w.area.session.id} at={w.at} k={cam.k} say={w.area.session.now || w.area.session.title} title={w.area.session.title} flip={w.at.x > bounds.w - 380} />
+        {present.filter((w) => inView(w.area.box)).map((w) => (
+          <AgentCursor
+            harness={w.area.session.harness}
+            key={w.area.session.id}
+            state={w.state}
+            at={w.at}
+            k={cam.k}
+            say={w.area.session.now || w.area.session.title}
+            when={ago(w.area.session.lastAt)}
+            title={w.area.session.title}
+            flip={w.at.x > bounds.w - 380}
+          />
         ))}
       </div>
-      <MapDock frames={frames} bounds={bounds} cam={cam} size={size} agents={working.map((w) => w.at)}
+      <MapDock frames={frames} bounds={bounds} cam={cam} size={size} agents={present.filter((w) => w.state !== "recent").map((w) => w.at)}
         setCam={(c) => { cancelAnimationFrame(glide.current); setCam(c); }} zoomBy={zoomBy} fit={fit} />
     </div>
   );
@@ -221,10 +234,35 @@ const CURSOR_D = roundedPolygon([[0, 0, 4.5], [37.5, 28.2, 8], [18.3, 34.4, 5], 
 const MEDIA_TIP = 64;
 
 /** `k` is the camera's scale: the cursor keeps its size on screen. */
-function AgentCursor({ at, k, say, title, flip, harness }: { harness?: string; at: { x: number; y: number }; k: number; say: string; title: string; flip: boolean }) {
+function AgentCursor({
+  at,
+  k,
+  say,
+  when,
+  title,
+  flip,
+  harness,
+  state,
+}: {
+  harness?: string;
+  state: "working" | "open" | "recent";
+  at: { x: number; y: number };
+  k: number;
+  say: string;
+  when: string;
+  title: string;
+  flip: boolean;
+}) {
   const shape = { d: CURSOR_D, vectorEffect: "non-scaling-stroke" as const };
+  const statusLabel = state === "working" ? "working on" : state === "open" ? "active on" : "touched";
   return (
-    <div className={`agent-cursor${flip ? " flip" : ""}`} style={{ left: at.x, top: at.y, scale: `${1 / k}` }} aria-label={`${harnessName(harness)}, working on ${title}: ${say}`} title={`${title}: ${say}`}>
+    <div
+      className={`agent-cursor${flip ? " flip" : ""}`}
+      data-state={state}
+      style={{ left: at.x, top: at.y, scale: `${1 / k}` }}
+      aria-label={`${harnessName(harness)}, ${statusLabel} ${title}: ${say}`}
+      title={`${title}: ${say} (${when})`}
+    >
       <div className="drift">
         <svg width="32" height="36" viewBox="-6 -3 32 36" aria-hidden="true">
           <g className="sway" transform="scale(0.6)">
@@ -233,7 +271,12 @@ function AgentCursor({ at, k, say, title, flip, harness }: { harness?: string; a
             <path {...shape} className="light" />
           </g>
         </svg>
-        <span className="tag"><HarnessCoin harness={harness} size={16} /><span className="who">{harnessName(harness)}</span><span className="say">{say}</span><Working /></span>
+        <span className="tag">
+          <HarnessCoin harness={harness} size={16} />
+          <span className="who">{harnessName(harness)}</span>
+          {state !== "recent" ? <span className="say">{say}</span> : null}
+          {state === "working" ? <Working /> : <span className="when">{when}</span>}
+        </span>
       </div>
     </div>
   );
