@@ -2,6 +2,7 @@
 // session an area in it, and an area's screens are cards four across, newest first. Frames fill
 // two columns, the shorter one first.
 import type { CanvasData, Project, Screen, Session, Show } from "./api";
+import { groupShows, type ShowGroup } from "./folio";
 
 export const CARD_W = 232;
 export const MEDIA_H = 145;
@@ -21,11 +22,16 @@ const ORIGIN = 40;
 
 export type Box = { x: number; y: number; w: number; h: number };
 export type Card = { screen: Screen; box: Box };
-export type ShowCard = { show: Show; box: Box };
+export type ShowCard = ShowGroup & { box: Box };
 export type Area = { session: Session; project: Project; box: Box; cards: Card[]; shows: ShowCard[]; hidden: number };
 export type Frame = { project: Project; box: Box; areas: Area[] };
 
-export function layout(data: CanvasData, opened: Set<string>, keep: (s: Screen) => boolean = () => true): { frames: Frame[]; bounds: Box } {
+export function layout(
+  data: CanvasData,
+  opened: Set<string>,
+  keep: (s: Screen) => boolean = () => true,
+  fanned: ReadonlySet<string> = new Set(),
+): { frames: Frame[]; bounds: Box } {
   const cols = [ORIGIN, ORIGIN];
   const frames: Frame[] = [];
   for (const project of data.projects) {
@@ -35,11 +41,11 @@ export function layout(data: CanvasData, opened: Set<string>, keep: (s: Screen) 
     const areas: Area[] = [];
     for (const session of project.sessions) {
       const all = session.screens.filter(keep).slice().reverse();
-      const docs = session.shows || [];
+      const docs = groupShows(session.shows || [], fanned);
       if (!all.length && !docs.length) continue;
       const shown = opened.has(session.id) ? all : all.slice(0, SHOWN);
       const at = (i: number) => ({ x: x + PAD + (i % COLS) * (CARD_W + GAP), y: y + LABEL_H + Math.floor(i / COLS) * (CARD_H + GAP), w: CARD_W, h: CARD_H });
-      const shows = docs.map((show, i) => ({ show, box: at(i) }));
+      const shows: ShowCard[] = docs.map((group, i) => ({ ...group, box: at(i) }));
       const cards = shown.map((screen, i) => ({ screen, box: at(docs.length + i) }));
       const rows = Math.ceil((docs.length + shown.length) / COLS);
       const h = LABEL_H + rows * CARD_H + (rows - 1) * GAP;

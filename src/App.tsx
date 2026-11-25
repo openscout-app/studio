@@ -48,7 +48,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [query, setQuery] = useState("");
-  const [reading, setReading] = useState<Show | null>(null);
+  const [reading, setReading] = useState<{ show: Show; shows?: Show[] } | null>(null);
+  const [fanned, setFanned] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<Filter>("all");
   // which projects and agents show, kept between visits
   const [view, setView] = useState<View>(readView);
@@ -143,8 +144,8 @@ export function App() {
         })),
       })),
     };
-    return layout(shaped, opened);
-  }, [data, opened, keep, view, linked, filter, query]);
+    return layout(shaped, opened, undefined, fanned);
+  }, [data, opened, keep, view, linked, filter, query, fanned]);
   // land back where you were if that session is in this window, else on the latest session. Sessions
   // are read newest first, so yours usually shows within a moment; past a short wait, take the latest.
   const place = useMemo(readPlace, [hours]);
@@ -258,14 +259,31 @@ export function App() {
               returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
               controls={data && <ViewControls data={data} hours={hours} setHours={pick} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
               {scene && ready && (
-                <Canvas key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened} onShow={setReading}
-                  onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
+                <Canvas
+                  key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`}
+                  frames={scene.frames}
+                  bounds={scene.bounds}
+                  notes={notes}
+                  focus={focus}
+                  onOpen={onOpen}
+                  opened={opened}
+                  onShow={(show, shows) => setReading({ show, shows })}
+                  onFanOut={(id) => setFanned((f) => { const n = new Set(f); n.add(id); return n; })}
+                  onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })}
+                />
               )}
               {data && <Progress loading={data.loading} counts={counts} />}
             </Arrival>
           </main>
           {missing && <div className="toast" role="alert" onClick={() => { setMissing(null); history.replaceState(null, "", "/"); }}>{missing}</div>}
-          {reading && <Reader show={reading} onClose={() => setReading(null)} />}
+          {reading && (
+            <Reader
+              show={reading.show}
+              shows={reading.shows}
+              onSelect={(next) => setReading((prev) => prev ? { ...prev, show: next } : null)}
+              onClose={() => setReading(null)}
+            />
+          )}
           {target && open && (
             <Stage
               key={target.session.id} session={target.session} project={target.project} screens={target.screens} index={target.index}
