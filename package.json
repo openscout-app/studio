@@ -1,7 +1,7 @@
 {
   "name": "@openscout/studio",
-  "version": "0.1.0",
-  "description": "What your agents make, on Scout's canvas. Pin a note on a screen and Scout takes it to the session that made it.",
+  "version": "0.2.0",
+  "description": "What your agents make, on Scout's canvas. Pin a note on a screen and Scout takes it to the session that made it. Prebuilt HTML served on loopback and backed by the Scout CLI.",
   "license": "Apache-2.0",
   "homepage": "https://openscout.app",
   "repository": {
@@ -18,33 +18,28 @@
     "server/*.mjs",
     "!server/*.test.mjs",
     "dist",
-    "README.md"
+    "plugin",
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20.11"
   },
-  "os": [
-    "darwin"
-  ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "vite build",
     "start": "node bin/scout-studio.mjs",
-    "test": "node --test server/*.test.mjs",
-    "prepare": "vite build"
+    "test": "node --test server/*.test.mjs"
   },
   "dependencies": {
-    "@openscout/scout": "^0.5.3",
+    "@openscout/scout": "^0.5.4",
     "marked": "17.0.6"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "4.7.0",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "typescript": "5.9.3",
-    "vite": "6.4.6"
+    "@vitejs/plugin-react-swc": "^4.3.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "scout-app": "github:openscout-app/scout-app#b4d8686",
+    "vite": "^7.0.0"
   }
 }

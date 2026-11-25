@@ -54,6 +54,26 @@ body {
 button { font: inherit; color: inherit; }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
+/* ---- standalone frame integration */
+.studio-standalone-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: calc(100vh - 41px);
+  min-height: 480px;
+  overflow: hidden;
+}
+.s-thin-scroll:has(.s-thin-setup) .studio-standalone-surface {
+  height: calc(100vh - 98px);
+}
+.studio-standalone-surface > .field {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: grid;
+}
+
 /* ---- the bar: brand left, search centred, status right */
 .app { display: grid; grid-template-rows: var(--scout-top-row) minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); height: 100%; overflow: hidden; }
 .bar {
