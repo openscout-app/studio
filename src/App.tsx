@@ -8,6 +8,7 @@ import {
 } from "scout-app/shell";
 import { api, count, type CanvasData, type Note, type Pointer, type Screen, type Session, type Show } from "./api";
 import { Canvas } from "./Canvas";
+import { Library } from "./Library";
 import { Arrival, Progress } from "./Loading";
 import { Stage } from "./Stage";
 import { Reader } from "./Reader";
@@ -48,7 +49,11 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [query, setQuery] = useState("");
-  const [reading, setReading] = useState<Show | null>(null);
+  const [surface, setSurface] = useState<"canvas" | "library">(() =>
+    new URLSearchParams(location.search).get("view") === "library" ? "library" : "canvas",
+  );
+  const [reading, setReading] = useState<{ show: Show; shows?: Show[] } | null>(null);
+  const [fanned, setFanned] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<Filter>("all");
   // which projects and agents show, kept between visits
   const [view, setView] = useState<View>(readView);
@@ -143,8 +148,8 @@ export function App() {
         })),
       })),
     };
-    return layout(shaped, opened);
-  }, [data, opened, keep, view, linked, filter, query]);
+    return layout(shaped, opened, undefined, fanned);
+  }, [data, opened, keep, view, linked, filter, query, fanned]);
   // land back where you were if that session is in this window, else on the latest session. Sessions
   // are read newest first, so yours usually shows within a moment; past a short wait, take the latest.
   const place = useMemo(readPlace, [hours]);
@@ -230,12 +235,44 @@ export function App() {
       }
     : null;
 
-  const headerActions = data ? (
-    <span className="chip counts">
-      {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
-      {count(counts.sessions, "session")}
-    </span>
-  ) : null;
+  const switchSurface = (next: "canvas" | "library") => {
+    setSurface(next);
+    const url = new URL(location.href);
+    if (next === "library") url.searchParams.set("view", "library");
+    else url.searchParams.delete("view");
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
+  };
+
+  const headerActions = (
+    <div className="studio-header-right">
+      <div className="studio-view-tabs" role="tablist" aria-label="Studio view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={surface === "canvas"}
+          className="studio-view-tab"
+          onClick={() => switchSurface("canvas")}
+        >
+          Canvas
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={surface === "library"}
+          className="studio-view-tab"
+          onClick={() => switchSurface("library")}
+        >
+          Library
+        </button>
+      </div>
+      {data && (
+        <span className="chip counts">
+          {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
+          {count(counts.sessions, "session")}
+        </span>
+      )}
+    </div>
+  );
 
   return (
     <ScoutAppFrame
@@ -254,18 +291,46 @@ export function App() {
       <StandaloneRecordRouter product="Studio" rail="wide" navigate={navigateBrowser}>
         <div className="studio-standalone-surface">
           <main className="field">
-            <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all" || viewing} ready={ready}
-              returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
-              controls={data && <ViewControls data={data} hours={hours} setHours={pick} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
-              {scene && ready && (
-                <Canvas key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened} onShow={setReading}
-                  onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
-              )}
-              {data && <Progress loading={data.loading} counts={counts} />}
-            </Arrival>
+            {surface === "library" ? (
+              <Library
+                data={data}
+                query={query}
+                onOpenStage={(sessionId, hash) => {
+                  switchSurface("canvas");
+                  show({ session: sessionId, hash });
+                }}
+              />
+            ) : (
+              <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all" || viewing} ready={ready}
+                returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
+                controls={data && <ViewControls data={data} hours={hours} setHours={pick} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
+                {scene && ready && (
+                  <Canvas
+                    key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`}
+                    frames={scene.frames}
+                    bounds={scene.bounds}
+                    notes={notes}
+                    focus={focus}
+                    onOpen={onOpen}
+                    opened={opened}
+                    onShow={(show, shows) => setReading({ show, shows })}
+                    onFanOut={(id) => setFanned((f) => { const n = new Set(f); n.add(id); return n; })}
+                    onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })}
+                  />
+                )}
+                {data && <Progress loading={data.loading} counts={counts} />}
+              </Arrival>
+            )}
           </main>
           {missing && <div className="toast" role="alert" onClick={() => { setMissing(null); history.replaceState(null, "", "/"); }}>{missing}</div>}
-          {reading && <Reader show={reading} onClose={() => setReading(null)} />}
+          {reading && (
+            <Reader
+              show={reading.show}
+              shows={reading.shows}
+              onSelect={(next) => setReading((prev) => prev ? { ...prev, show: next } : null)}
+              onClose={() => setReading(null)}
+            />
+          )}
           {target && open && (
             <Stage
               key={target.session.id} session={target.session} project={target.project} screens={target.screens} index={target.index}

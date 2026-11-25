@@ -2,7 +2,8 @@
 // pinch or hold ⌘ and scroll to zoom. Only the cards in view are drawn.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ago, count, thumb, type Note, type Screen, showView, type Show } from "./api";
-import { CARD_W, MEDIA_H, type Area, type Box, type Frame } from "./scene";
+import { docTitle } from "./folio";
+import { CARD_W, MEDIA_H, type Area, type Box, type Frame, type ShowCard } from "./scene";
 import { savePlace } from "./place";
 import { HarnessCoin, harnessName } from "./Harness";
 
@@ -38,7 +39,8 @@ type Props = {
   focus: { box: Box; at?: { sx: number; sy: number; k: number } } | null;
   onOpen: (area: Area, s: Screen, at?: { x: number; y: number }) => void;
   onMore: (sessionId: string) => void; opened: Set<string>;
-  onShow: (show: Show) => void;
+  onShow: (show: Show, shows?: Show[]) => void;
+  onFanOut?: (folioId: string) => void;
 };
 
 const still = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -46,7 +48,7 @@ const still = () => typeof matchMedia === "function" && matchMedia("(prefers-red
 /** When each thing was first drawn, so only new arrivals fade in, not cards scrolled back into view. */
 const seen = new Map<string, number>();
 
-export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened, onShow }: Props) {
+export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened, onShow, onFanOut }: Props) {
   const view = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 1200, h: 800 });
   const [cam, setCam] = useState<Cam | null>(null);
@@ -182,7 +184,7 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened, o
           </div>
         ))}
         {frames.flatMap((f) => f.areas).filter((a) => inView(a.box)).map((a) => (
-          <AreaView key={a.session.id} area={a} inView={inView} byScreen={byScreen} moved={moved} onOpen={onOpen} onMore={onMore} onShow={onShow} opened={opened.has(a.session.id)} />
+          <AreaView key={a.session.id} area={a} inView={inView} byScreen={byScreen} moved={moved} onOpen={onOpen} onMore={onMore} onShow={onShow} onFanOut={onFanOut} opened={opened.has(a.session.id)} />
         ))}
         {working.filter((w) => inView(w.area.box)).map((w) => (
           <AgentCursor harness={w.area.session.harness} key={w.area.session.id} at={w.at} k={cam.k} say={w.area.session.now || w.area.session.title} title={w.area.session.title} flip={w.at.x > bounds.w - 380} />
@@ -338,7 +340,7 @@ function MapDock({ frames, bounds, cam, size, agents, setCam, zoomBy, fit }: {
         onLostPointerCapture={() => { drag.current = null; }} onKeyDown={key}>
         <svg width={map.w} height={map.h} viewBox={`0 0 ${map.w} ${map.h}`} aria-hidden="true">
           {frames.map((f) => rect(f.box, "map-frame", f.project.root))}
-          {frames.flatMap((f) => f.areas.flatMap((a) => [...a.shows.map((c) => rect(c.box, "map-card", c.show.id)), ...a.cards.map((c) => rect(c.box, "map-card", c.screen.id))]))}
+          {frames.flatMap((f) => f.areas.flatMap((a) => [...a.shows.map((c) => rect(c.box, "map-card", c.kind === "folio" ? c.id : c.show.id)), ...a.cards.map((c) => rect(c.box, "map-card", c.screen.id))]))}
           {agents.map((p, i) => { const m = map.toMap({ x: p.x, y: p.y, w: 0, h: 0 }); return <circle key={i} className="map-dot" cx={m.x} cy={m.y} r={2} />; })}
           <rect className="map-view" x={seen.x} y={seen.y} width={seen.w} height={seen.h} />
         </svg>
@@ -354,11 +356,12 @@ function MapDock({ frames, bounds, cam, size, agents, setCam, zoomBy, fit }: {
   );
 }
 
-function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, opened }: {
+function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, onFanOut, opened }: {
   area: Area; inView: (b: Box) => boolean; byScreen: Map<string, Note[]>; moved: React.MutableRefObject<boolean>;
-  onOpen: Props["onOpen"]; onMore: (id: string) => void; onShow: Props["onShow"]; opened: boolean;
+  onOpen: Props["onOpen"]; onMore: (id: string) => void; onShow: Props["onShow"]; onFanOut?: Props["onFanOut"]; opened: boolean;
 }) {
   const s = area.session;
+  const sessionMarkdowns = (s.shows || []).filter((item) => item.view === "markdown");
   return (
     <>
       <div className="area-head" style={{ left: area.box.x, top: area.box.y, width: area.box.w, height: 64 }}>
@@ -379,24 +382,91 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, opene
         </div>
         <div className="prompt">{s.prompt}</div>
       </div>
-      {area.shows.filter((c) => inView(c.box)).map(({ show, box }) => (
-        <button key={show.id} className={`card shown${fresh(show.id) ? " arriving" : ""}`} style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
-          onClick={() => { if (!moved.current) onShow(show); }}>
-          <div className="media">
-            {show.view === "image" ? <img src={showView(show)} alt="" loading="lazy" draggable={false} />
-              : <div className="doc"><DocGlyph view={show.view} /><span className="doc-name">{show.name}</span><span className="doc-cap">{show.path.startsWith(show.worktree + "/") ? show.path.slice(show.worktree.length + 1) : show.path}</span></div>}
-          </div>
-          <div className="foot">
-            <div className="cap">{show.caption || show.name}</div>
-            <div className="sub">
-              <span>{ago(show.at)}</span>
-              <span className="tag accent">shown</span>
-              <span>{show.view === "file" ? show.mediaType : show.view}</span>
-              {show.versions > 1 && <span>{show.versions} versions</span>}
+      {area.shows.filter((c) => inView(c.box)).map((item: ShowCard) => {
+        if (item.kind === "folio") {
+          const preview = item.shows.slice(0, 5);
+          const extra = item.shows.length - preview.length;
+          return (
+            <div
+              key={item.id}
+              className={`card shown folio${fresh(item.id) ? " arriving" : ""}`}
+              style={{ left: item.box.x, top: item.box.y, width: item.box.w, height: item.box.h }}
+              role="group"
+              aria-label={`${item.title} (${item.shows.length} documents)`}
+            >
+              <div className="media">
+                <div className="folio-body">
+                  <div className="folio-head">
+                    <DocGlyph view="markdown" />
+                    <span className="folio-title">{item.title}</span>
+                    {onFanOut && (
+                      <button
+                        type="button"
+                        className="folio-fan"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); onFanOut(item.id); }}
+                      >
+                        Fan out
+                      </button>
+                    )}
+                  </div>
+                  <div className="folio-list">
+                    {preview.map((doc, idx) => (
+                      <button
+                        key={doc.id}
+                        type="button"
+                        className="folio-row"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={() => { if (!moved.current) onShow(doc, item.shows); }}
+                      >
+                        <span className="folio-num">{String(idx + 1).padStart(2, "0")}</span>
+                        <span className="folio-name">{docTitle(doc)}</span>
+                      </button>
+                    ))}
+                    {extra > 0 && (
+                      <button
+                        type="button"
+                        className="folio-more"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={() => { if (!moved.current) onShow(item.shows[preview.length], item.shows); }}
+                      >
+                        +{extra} more in Reader →
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="foot">
+                <div className="cap">{item.title}</div>
+                <div className="sub">
+                  <span>{ago(item.shows[0].at)}</span>
+                  <span className="tag accent">{item.shows.length} markdowns</span>
+                  <span>folio</span>
+                </div>
+              </div>
             </div>
-          </div>
-        </button>
-      ))}
+          );
+        }
+        const { show, box } = item;
+        return (
+          <button key={show.id} className={`card shown${fresh(show.id) ? " arriving" : ""}`} style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+            onClick={() => { if (!moved.current) onShow(show, show.view === "markdown" && sessionMarkdowns.length > 1 ? sessionMarkdowns : undefined); }}>
+            <div className="media">
+              {show.view === "image" ? <img src={showView(show)} alt="" loading="lazy" draggable={false} />
+                : <div className="doc"><DocGlyph view={show.view} /><span className="doc-name">{show.view === "markdown" ? docTitle(show) : show.name}</span><span className="doc-cap">{show.path.startsWith(show.worktree + "/") ? show.path.slice(show.worktree.length + 1) : show.path}</span></div>}
+            </div>
+            <div className="foot">
+              <div className="cap">{show.caption || show.name}</div>
+              <div className="sub">
+                <span>{ago(show.at)}</span>
+                <span className="tag accent">shown</span>
+                <span>{show.view === "file" ? show.mediaType : show.view}</span>
+                {show.versions > 1 && <span>{show.versions} versions</span>}
+              </div>
+            </div>
+          </button>
+        );
+      })}
       {area.cards.filter((c) => inView(c.box)).map(({ screen: sc, box }) => {
         const pins = byScreen.get(sc.id) || [];
         return (
