@@ -63,7 +63,15 @@ test("Codex tool-result image appears on the canvas and materializes byte for by
   assert.deepEqual(Buffer.from(await got.arrayBuffer()), bytes);
   const { note } = await call(base, "POST", "/api/notes", { session: id, harness: "codex", screen: { hash: screens[0].id }, text: "Check the header." });
   const sent = path.join(process.env.SCOUT_STUDIO_HOME, "send-args");
-  for (let i = 0; !fs.existsSync(sent) && i < 30; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  const storedNote = async () => (await call(base, "GET", "/api/notes")).notes.find(n => n.id === note.id);
+  // The fake CLI writes its arguments before Studio records the delivery result.
+  let delivered;
+  for (let i = 0; i < 100; i++) {
+    delivered = await storedNote();
+    if (delivered?.trail.at(-1)?.what === "sent") break;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(delivered?.trail.at(-1)?.what, "sent");
   const args = fs.readFileSync(sent, "utf8");
   assert.ok(args.includes(id) && args.includes(note.id) && args.includes("--harness\ncodex"));
   const reply = [
@@ -71,7 +79,7 @@ test("Codex tool-result image appears on the canvas and materializes byte for by
     { role: "assistant", content: [{ type: "output_text", text: "Header checked." }] },
   ].map(message => JSON.stringify({ type: "response_item", payload: { type: "message", ...message }, timestamp }));
   fs.appendFileSync(path.join(day, "rollout-example-" + id + ".jsonl"), reply.join("\n") + "\n");
-  const stored = (await call(base, "GET", "/api/notes")).notes.find(n => n.id === note.id);
+  const stored = await storedNote();
   assert.equal(stored.answers[0].text, "Header checked.");
 });
 
