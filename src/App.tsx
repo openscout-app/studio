@@ -9,10 +9,11 @@ import {
   useScoutThinHost,
   type ScoutPageTab,
   type ScoutThinStatusBase,
+  type ScoutTopNavTab,
 } from "scout-app/shell";
 import { api, count, type CanvasData, type Note, type Pointer, type Screen, type Session, type Show } from "./api";
 import { Canvas } from "./Canvas";
-import { Library } from "./Library";
+import { Library, type LibraryFilter } from "./Library";
 import { Arrival, Progress } from "./Loading";
 import { Stage } from "./Stage";
 import { Reader } from "./Reader";
@@ -63,6 +64,7 @@ export function App() {
   const [reading, setReading] = useState<{ show: Show; shows?: Show[] } | null>(null);
   const [fanned, setFanned] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<Filter>("all");
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
   // which projects and agents show, kept between visits
   const [view, setView] = useState<View>(readView);
   useEffect(() => { try { localStorage.setItem("scout-studio:view", JSON.stringify(view)); } catch {} }, [view]);
@@ -261,11 +263,24 @@ export function App() {
     </div>
   );
 
+  const topTabs: readonly ScoutTopNavTab[] = isLibrary
+    ? [
+        { id: "all", label: "All", active: libraryFilter === "all", onSelect: () => setLibraryFilter("all") },
+        { id: "docs", label: "Docs", active: libraryFilter === "docs", onSelect: () => setLibraryFilter("docs") },
+        { id: "screens", label: "Screens", active: libraryFilter === "screens", onSelect: () => setLibraryFilter("screens") },
+      ]
+    : [
+        { id: "all", label: "All", active: filter === "all", onSelect: () => setFilter("all") },
+        { id: "changed", label: "Changed", active: filter === "changed", onSelect: () => setFilter("changed") },
+        { id: "notes", label: "Notes", active: filter === "notes", onSelect: () => setFilter("notes") },
+      ];
+
   return (
     <ScoutAppFrame
       product="Scout"
       pages={STUDIO_PAGES}
       activePageId={isLibrary ? "library" : "canvas"}
+      topTabs={topTabs}
       chrome="sidebar"
       settings={{ extra: studioSettingsExtra }}
       variant="canvas"
@@ -286,6 +301,8 @@ export function App() {
               <Library
                 data={data}
                 query={query}
+                filter={libraryFilter}
+                onFilterChange={setLibraryFilter}
                 onOpenStage={(sessionId, hash) => {
                   navigateBrowser("/");
                   show({ session: sessionId, hash });
