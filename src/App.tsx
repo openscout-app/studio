@@ -3,6 +3,7 @@ import {
   CanvasGlyph,
   RecordGlyph,
   ScoutAppFrame,
+  ScoutAppearance,
   StandaloneRecordRouter,
   navigateBrowser,
   useBrowserLocation,
@@ -50,21 +51,42 @@ export function App() {
   // how far back: every visit starts short. Picking a window holds it for the visit; until then the canvas
   // widens on its own when the window holds no screens.
   // ?hours=24 in the address opens on that window, as if it had been picked
-  const startAt = Number(new URLSearchParams(location.search).get("hours"));
+  const startParams = new URLSearchParams(location.search);
+  const startAt = Number(startParams.get("hours"));
   const given = [4, 24, 72].includes(startAt) ? startAt : 0;
+  const embedded = startParams.get("embed") === "1" || startParams.get("embed") === "true";
+  const initialFilter = startParams.get("filter");
+  const initialThemeParam = startParams.get("theme");
+  const [embedTheme, setEmbedTheme] = useState<"dark" | "light">(initialThemeParam === "light" ? "light" : "dark");
   const [hours, setHours] = useState(given || START_HOURS);
   const [picked, setPicked] = useState(!!given);
   const pick = (h: number) => { setPicked(true); setHours(h); };
   const [data, setData] = useState<CanvasData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => startParams.get("q") || "");
   const { pathname, search: locSearch } = useBrowserLocation();
-  const isLibrary = pathname === "/library" || pathname.startsWith("/library/") || new URLSearchParams(locSearch).get("view") === "library";
+  const isLibrary = !embedded && (pathname === "/library" || pathname.startsWith("/library/") || new URLSearchParams(locSearch).get("view") === "library");
   const [reading, setReading] = useState<{ show: Show; shows?: Show[] } | null>(null);
   const [fanned, setFanned] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>(
+    initialFilter === "changed" || initialFilter === "notes" ? initialFilter : "all",
+  );
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
+
+  useEffect(() => {
+    if (!embedded) return;
+    const onMessage = (event: MessageEvent) => {
+      if (!/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(event.origin)) return;
+      const msg = event.data as { type?: string; filter?: Filter; query?: string; theme?: "dark" | "light" } | null;
+      if (!msg || msg.type !== "scout-reviews:sync") return;
+      if (msg.filter === "all" || msg.filter === "changed" || msg.filter === "notes") setFilter(msg.filter);
+      if (typeof msg.query === "string") setQuery(msg.query);
+      if (msg.theme === "dark" || msg.theme === "light") setEmbedTheme(msg.theme);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [embedded]);
   // which projects and agents show, kept between visits
   const [view, setView] = useState<View>(readView);
   useEffect(() => { try { localStorage.setItem("scout-studio:view", JSON.stringify(view)); } catch {} }, [view]);
@@ -116,6 +138,7 @@ export function App() {
   }, []);
   const show = (o: Open | null) => {
     setOpen(o);
+    if (embedded) return;
     // a pointer keeps its own address while its screen is open; anything else is a plain screen link
     history.replaceState(null, "", o?.pointer ? `/p/${o.pointer.id}` : o?.hash ? `/#s/${o.session}/${o.hash}` : "/");
   };
@@ -275,6 +298,70 @@ export function App() {
         { id: "notes", label: "Notes", active: filter === "notes", onSelect: () => setFilter("notes") },
       ];
 
+  const surface = (
+    <div className={`studio-standalone-surface${embedded ? " studio-standalone-surface--embed" : ""}`}>
+      <main className="field">
+        {isLibrary ? (
+          <Library
+            data={data}
+            query={query}
+            filter={libraryFilter}
+            onFilterChange={setLibraryFilter}
+            onOpenStage={(sessionId, hash) => {
+              navigateBrowser("/");
+              show({ session: sessionId, hash });
+            }}
+          />
+        ) : (
+          <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all" || viewing} ready={ready}
+            returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
+            controls={data && <ViewControls data={data} hours={hours} setHours={pick} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
+            {scene && ready && (
+              <Canvas
+                key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`}
+                frames={scene.frames}
+                bounds={scene.bounds}
+                notes={notes}
+                focus={focus}
+                onOpen={onOpen}
+                opened={opened}
+                onShow={(show, shows) => setReading({ show, shows })}
+                onFanOut={(id) => setFanned((f) => { const n = new Set(f); n.add(id); return n; })}
+                onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })}
+              />
+            )}
+            {data && <Progress loading={data.loading} counts={counts} />}
+          </Arrival>
+        )}
+      </main>
+      {missing && <div className="toast" role="alert" onClick={() => { setMissing(null); history.replaceState(null, "", "/"); }}>{missing}</div>}
+      {reading && (
+        <Reader
+          show={reading.show}
+          shows={reading.shows}
+          onSelect={(next) => setReading((prev) => prev ? { ...prev, show: next } : null)}
+          onClose={() => setReading(null)}
+        />
+      )}
+      {target && open && (
+        <Stage
+          key={target.session.id} session={target.session} project={target.project} screens={target.screens} index={target.index}
+          notes={notes} at={open.at} pointer={open.pointer} scoutUp={!!data?.scout.up}
+          onIndex={(i) => show({ session: target.session.id, hash: target.screens[i].hash })}
+          onClose={() => show(null)} onNotes={loadNotes}
+        />
+      )}
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <ScoutAppearance initialTheme={embedTheme}>
+        {surface}
+      </ScoutAppearance>
+    );
+  }
+
   return (
     <ScoutAppFrame
       product="Scout"
@@ -295,59 +382,7 @@ export function App() {
       }}
     >
       <StandaloneRecordRouter product="Scout" rail="wide" navigate={navigateBrowser}>
-        <div className="studio-standalone-surface">
-          <main className="field">
-            {isLibrary ? (
-              <Library
-                data={data}
-                query={query}
-                filter={libraryFilter}
-                onFilterChange={setLibraryFilter}
-                onOpenStage={(sessionId, hash) => {
-                  navigateBrowser("/");
-                  show({ session: sessionId, hash });
-                }}
-              />
-            ) : (
-              <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all" || viewing} ready={ready}
-                returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
-                controls={data && <ViewControls data={data} hours={hours} setHours={pick} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
-                {scene && ready && (
-                  <Canvas
-                    key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`}
-                    frames={scene.frames}
-                    bounds={scene.bounds}
-                    notes={notes}
-                    focus={focus}
-                    onOpen={onOpen}
-                    opened={opened}
-                    onShow={(show, shows) => setReading({ show, shows })}
-                    onFanOut={(id) => setFanned((f) => { const n = new Set(f); n.add(id); return n; })}
-                    onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })}
-                  />
-                )}
-                {data && <Progress loading={data.loading} counts={counts} />}
-              </Arrival>
-            )}
-          </main>
-          {missing && <div className="toast" role="alert" onClick={() => { setMissing(null); history.replaceState(null, "", "/"); }}>{missing}</div>}
-          {reading && (
-            <Reader
-              show={reading.show}
-              shows={reading.shows}
-              onSelect={(next) => setReading((prev) => prev ? { ...prev, show: next } : null)}
-              onClose={() => setReading(null)}
-            />
-          )}
-          {target && open && (
-            <Stage
-              key={target.session.id} session={target.session} project={target.project} screens={target.screens} index={target.index}
-              notes={notes} at={open.at} pointer={open.pointer} scoutUp={!!data?.scout.up}
-              onIndex={(i) => show({ session: target.session.id, hash: target.screens[i].hash })}
-              onClose={() => show(null)} onNotes={loadNotes}
-            />
-          )}
-        </div>
+        {surface}
       </StandaloneRecordRouter>
     </ScoutAppFrame>
   );

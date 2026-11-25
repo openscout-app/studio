@@ -65,6 +65,10 @@ button { font: inherit; color: inherit; }
   min-height: 0;
   overflow: hidden;
 }
+.studio-standalone-surface--embed {
+  width: 100vw;
+  height: 100vh;
+}
 .studio-standalone-surface > .field {
   flex: 1 1 auto;
   min-height: 0;
