@@ -37,7 +37,7 @@ function Pop({ label, badge, children }: { label: string; badge?: string; childr
   }, [open]);
   return (
     <div className="pop" ref={box}>
-      <button className={`ghost${badge ? " accent" : ""}`} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button className={`s-ds-btn${badge ? "" : " s-ds-btn--secondary"}`} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         {label}{badge && <span className="badge">{badge}</span>}<svg className="caret" viewBox="0 0 10 6" aria-hidden="true"><path d="m1 1 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
       {open && <div className="pop-panel" role="dialog" aria-label={label}>{children}</div>}
@@ -71,8 +71,8 @@ export function ViewControls({ data, hours, setHours, filter, setFilter, view, s
         <div className="pop-head">
           <span>Projects</span>
           <span className="grow" />
-          <button className="link" onClick={() => setView({ ...view, hiddenProjects: [] })}>All</button>
-          <button className="link" onClick={() => setView({ ...view, hiddenProjects: projects.map((p) => p.root) })}>None</button>
+          <button className="s-ds-btn s-ds-btn--tertiary" onClick={() => setView({ ...view, hiddenProjects: [] })}>All</button>
+          <button className="s-ds-btn s-ds-btn--tertiary" onClick={() => setView({ ...view, hiddenProjects: projects.map((p) => p.root) })}>None</button>
         </div>
         <ul className="pick">
           {projects.map((p) => (
@@ -96,8 +96,8 @@ export function ViewControls({ data, hours, setHours, filter, setFilter, view, s
             ))}
           </div>
           <span className="grow" />
-          <button className="link" onClick={() => setView({ ...view, hiddenSessions: [] })}>All</button>
-          <button className="link" onClick={() => setView({ ...view, hiddenSessions: sessions.map(({ s }) => s.id) })}>None</button>
+          <button className="s-ds-btn s-ds-btn--tertiary" onClick={() => setView({ ...view, hiddenSessions: [] })}>All</button>
+          <button className="s-ds-btn s-ds-btn--tertiary" onClick={() => setView({ ...view, hiddenSessions: sessions.map(({ s }) => s.id) })}>None</button>
         </div>
         <ul className="pick">
           {sessions.map(({ s, project }) => {

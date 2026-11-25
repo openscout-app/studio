@@ -31,3 +31,16 @@ test("zero-install servers deliver the same UI package assets", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("Studio ships a visible canvas shell before the app module", async () => {
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  const boot = html.match(/<div id="root">([\s\S]*?)<script type="module"/)?.[1];
+  assert.ok(boot, "boot markup must be inside the React root, before the module");
+  assert.match(boot, /data-scout-boot="canvas"/);
+  assert.match(boot, /Scout Studio/);
+  assert.match(boot, /role="status"/);
+  assert.equal([...boot.matchAll(/class="scout-boot-card"/g)].length, 3);
+  const css = html.match(/<style>([\s\S]*?)<\/style>/)?.[1];
+  assert.match(css, /max-width:\s*1228px/);
+  assert.match(css, /@media \(prefers-reduced-motion: no-preference\)/);
+});

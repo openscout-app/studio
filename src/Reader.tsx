@@ -15,17 +15,17 @@ export function Reader({ show, onClose }: { show: Show; onClose: () => void }) {
   return (
     <div className="reader" role="dialog" aria-label={show.name}>
       <div className="reader-bar">
-        <button className="ghost" onClick={onClose}>Close</button>
+        <button className="s-ds-btn s-ds-btn--secondary" onClick={onClose}>Close</button>
         <span className="title">{show.name}</span>
         <span className="where">{where} · shown {ago(show.at)}{show.versions > 1 ? ` · ${show.versions} versions` : ""}</span>
-        <a className="ghost" href={src} target="_blank" rel="noreferrer">Open in a tab</a>
+        <a className="s-ds-btn s-ds-btn--secondary" href={src} target="_blank" rel="noreferrer">Open in a tab</a>
       </div>
       {show.view === "image" ? (
         <div className="reader-main media"><img src={src} alt={show.caption || show.name} /></div>
       ) : show.view === "video" ? (
         <div className="reader-main media"><video src={src} controls /></div>
       ) : show.view === "file" ? (
-        <div className="reader-main media"><a className="ghost" href={src} download={show.name}>Save {show.name}</a></div>
+        <div className="reader-main media"><a className="s-ds-btn s-ds-btn--secondary" href={src} download={show.name}>Save {show.name}</a></div>
       ) : (
         <div className="reader-main"><iframe src={src} title={show.name} sandbox={show.view === "html" ? "allow-scripts allow-popups" : show.view === "pdf" ? undefined : ""} /></div>
       )}

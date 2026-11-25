@@ -372,7 +372,7 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, opene
           {s.shows?.length > 0 && <span>{s.shows.length} shown</span>}
           {s.screens.length > 0 && <span>{count(s.screens.length, "screen")}</span>}
           {(area.hidden > 0 || opened) && (
-            <button className="more" onPointerDown={(e) => e.stopPropagation()} onClick={() => onMore(s.id)}>
+            <button className="s-ds-btn s-ds-btn--tertiary more" onPointerDown={(e) => e.stopPropagation()} onClick={() => onMore(s.id)}>
               {opened ? "Show fewer" : `${area.hidden} more`}
             </button>
           )}

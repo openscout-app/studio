@@ -15,7 +15,7 @@ scout-app-frame > [slot="center"] {
 scout-app-frame {
   box-sizing: border-box; position: sticky; top: 0; z-index: 12; height: var(--scout-header-height);
   display: flex; align-items: center; gap: var(--space-lg); padding: 0 var(--space-2xl);
-  color: var(--ink, var(--hud-ink, CanvasText)); background: var(--ground, var(--bg, var(--hud-bg, Canvas)));
+  color: var(--ink, var(--hud-ink, var(--scout-ink))); background: var(--ground, var(--bg, var(--hud-bg, var(--scout-bg))));
   border-bottom: 1px solid var(--line, var(--hud-line, color-mix(in srgb, currentColor 16%, transparent)));
   font: var(--font-weight-body) var(--text-lg)/var(--leading-tight) var(--font-sans);
 }
@@ -32,10 +32,38 @@ scout-side-nav .scout-nav-item:hover {
   background: var(--hover, color-mix(in srgb, currentColor 4%, transparent));
 }
 scout-side-nav .scout-nav-item:is([aria-current="page"], [aria-current="true"], :has(input:checked)) {
-  color: var(--ink, var(--hud-ink, CanvasText));
+  color: var(--ink, var(--hud-ink, var(--scout-ink)));
   background: var(--selected, color-mix(in srgb, currentColor 7%, transparent));
 }
 scout-side-nav :where(a, button, select, input):focus-visible {
-  outline: 2px solid var(--hud-accent, var(--accent, currentColor)); outline-offset: 2px;
+  outline: 2px solid var(--hud-accent, var(--accent, var(--scout-accent))); outline-offset: 2px;
 }
 @media (max-width: 540px) { scout-app-frame { gap: 6px; padding-inline: 10px; } }
+
+/* Shared action grammar, from primary to quiet secondary and text-only tertiary. */
+.s-ds-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--accent, var(--hud-accent, var(--scout-accent)));
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink, var(--hud-ink, var(--scout-ink)));
+  font: 500 var(--text-md)/var(--leading-tight) var(--font-sans);
+  text-decoration: none;
+  cursor: pointer;
+}
+.s-ds-btn--secondary {
+  color: var(--muted, var(--hud-muted, var(--scout-muted)));
+  border-color: var(--line, var(--hud-line, color-mix(in srgb, currentColor 25%, transparent)));
+}
+.s-ds-btn--tertiary { border-color: transparent; padding-inline: 4px; }
+.s-ds-btn:hover:not(:disabled) { background: color-mix(in srgb, currentColor 7%, transparent); }
+.s-ds-btn:focus-visible {
+  outline: 2px solid var(--accent, var(--hud-accent, var(--scout-accent)));
+  outline-offset: 2px;
+}
+.s-ds-btn:disabled { opacity: .45; cursor: default; }

@@ -93,20 +93,20 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
   return (
     <div className="stage" role="dialog" aria-label="Screen" onContextMenu={(e) => { if (!ownMenu(e.target) && !shot.current?.contains(e.target as Node)) e.preventDefault(); }}>
       <div className="stage-bar">
-        <button className="ghost" onClick={onClose}>Close</button>
+        <button className="s-ds-btn s-ds-btn--secondary" onClick={onClose}>Close</button>
         <span className="title">{session.title}</span>
         <span className="where">{project.name}{session.branch ? ` · ${session.branch}` : ""} · {sc.url || sc.file || kindOf(sc)}</span>
         <span style={{ flex: 1 }} />
         {sc.before && (
-          <button className={`ghost${compare ? " accent" : ""}`} onClick={() => setCompare((v) => !v)} aria-pressed={compare}>
+          <button className={`s-ds-btn${compare ? "" : " s-ds-btn--secondary"}`} onClick={() => setCompare((v) => !v)} aria-pressed={compare}>
             {compare ? "Comparing with before" : "Compare with before"}
           </button>
         )}
         <span className="mono" style={{ color: "var(--dim)" }}>{index + 1} of {screens.length}</span>
       </div>
       <div className="stage-main">
-        {index > 0 && <button className="ghost nav prev" onClick={() => onIndex(index - 1)} aria-label="Newer screen">←</button>}
-        {index < screens.length - 1 && <button className="ghost nav next" onClick={() => onIndex(index + 1)} aria-label="Older screen">→</button>}
+        {index > 0 && <button className="s-ds-btn s-ds-btn--secondary nav prev" onClick={() => onIndex(index - 1)} aria-label="Newer screen">←</button>}
+        {index < screens.length - 1 && <button className="s-ds-btn s-ds-btn--secondary nav next" onClick={() => onIndex(index + 1)} aria-label="Older screen">→</button>}
         <div className="shot" ref={shot} onClick={place} onContextMenu={place}>
           <img src={img(sc)} alt="" draggable={false} />
           {showBefore && (
@@ -150,8 +150,8 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
               {pointer!.say && <p>{pointer!.say}</p>}
               {pointer!.replies.length > 0 && <div className="replied">You replied {ago(pointer!.replies.at(-1)!.at)}: {pointer!.replies.at(-1)!.text}</div>}
               <div className="row">
-                <button className="ghost" onClick={() => setHeard(true)}>Got it</button>
-                <button className="primary" onClick={() => { setReplyTo(pointer!); setDraft({ x: point.cx, y: point.cy }); }}>Reply here</button>
+                <button className="s-ds-btn s-ds-btn--secondary" onClick={() => setHeard(true)}>Got it</button>
+                <button className="s-ds-btn" onClick={() => { setReplyTo(pointer!); setDraft({ x: point.cx, y: point.cy }); }}>Reply here</button>
               </div>
             </div>
           )}
@@ -174,7 +174,7 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
                 />
                 <div className="row">
                   <span>{deliveryHint(session, scoutUp)}</span>
-                  <button className="primary" disabled={!text.trim() || busy} onClick={submit}>Send</button>
+                  <button className="s-ds-btn" disabled={!text.trim() || busy} onClick={submit}>Send</button>
                 </div>
               </div>
             </>
@@ -251,10 +251,10 @@ function Thread({ n, i, session, project, current, onFocus, onNotes }: { n: Note
       ))}
       <div className="status">{st.working ? <Working /> : <span className={`dot ${st.tone}`} />}<span>{st.text}</span></div>
       <div className="actions">
-        {(last === "waiting" || last === "failed") && (!session.harness || session.harness === "claude") && !n.kept && <button className="ghost accent" onClick={() => act(api.handOff(n.id))}>Hand to a new session</button>}
-        {last === "failed" && !n.kept && <button className="ghost" onClick={() => act(api.retry(n.id))}>Retry</button>}
-        <button className="ghost" onClick={() => act(api.keep(n.id, !n.kept))}>{n.kept ? "Reopen" : "Done"}</button>
-        <button className="ghost" onClick={() => act(api.remove(n.id))}>Delete</button>
+        {(last === "waiting" || last === "failed") && (!session.harness || session.harness === "claude") && !n.kept && <button className="s-ds-btn" onClick={() => act(api.handOff(n.id))}>Hand to a new session</button>}
+        {last === "failed" && !n.kept && <button className="s-ds-btn s-ds-btn--secondary" onClick={() => act(api.retry(n.id))}>Retry</button>}
+        <button className="s-ds-btn s-ds-btn--secondary" onClick={() => act(api.keep(n.id, !n.kept))}>{n.kept ? "Reopen" : "Done"}</button>
+        <button className="s-ds-btn s-ds-btn--secondary" onClick={() => act(api.remove(n.id))}>Delete</button>
       </div>
     </div>
   );

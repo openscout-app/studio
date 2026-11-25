@@ -196,8 +196,7 @@ export function App() {
       <header className="bar">
         <div className="bar-side">
           <a className="brand" href="/" aria-label="Scout Studio">
-            <span className="lockup" role="img" aria-label="Scout" />
-            <span className="product">Studio</span>
+            <span className="mark" aria-hidden="true" />Scout Studio
           </a>
         </div>
         <label className="find">
@@ -213,13 +212,18 @@ export function App() {
             </span>
           )}
           {data && <span className="sep" />}
-          <span className="chip" title={data?.scout.up ? "Scout's runtime answers on this Mac; notes go to sessions through it" : `Scout's runtime isn't answering; notes wait until it is. To start it: ${SETUP}`}>
-            <span className={`dot ${data ? (data.scout.up ? "ok" : "bad") : ""}`} />
+          <span className="chip runtime-status" title={data?.scout.up ? "Scout's runtime answers on this Mac; notes go to sessions through it" : `Scout's runtime isn't answering; notes wait until it is. To start it: ${SETUP}`}>
+            <span className={`dot ${data ? (data.scout.up ? "ok" : "bad") : "accent"}`} />
             {data ? (data.scout.up ? "Scout is up" : "Scout isn't running") : "Looking for Scout…"}
           </span>
         </div>
       </header>
       <main className="field">
+        {data && !data.scout.up && (
+          <aside className="setup-colophon" aria-label="Scout setup">
+            <p>Notes wait until Scout is running. Start it with <code>{SETUP}</code>.</p>
+          </aside>
+        )}
         <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all" || viewing} ready={ready}
           returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
           controls={data && <ViewControls data={data} hours={hours} setHours={pick} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
