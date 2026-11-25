@@ -28,18 +28,24 @@ type LibraryItem =
       session: Session;
     };
 
-type LibraryFilter = "all" | "docs" | "screens";
+export type LibraryFilter = "all" | "docs" | "screens";
 
 export function Library({
   data,
   query,
+  filter: controlledFilter,
+  onFilterChange,
   onOpenStage,
 }: {
   data: CanvasData | null;
   query: string;
+  filter?: LibraryFilter;
+  onFilterChange?: (next: LibraryFilter) => void;
   onOpenStage: (sessionId: string, hash: string) => void;
 }) {
-  const [filter, setFilter] = useState<LibraryFilter>("all");
+  const [internalFilter, setInternalFilter] = useState<LibraryFilter>("all");
+  const filter = controlledFilter ?? internalFilter;
+  const setFilter = onFilterChange ?? setInternalFilter;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [agentTag, setAgentTag] = useState("");
   const [noteText, setNoteText] = useState("");
@@ -181,17 +187,19 @@ export function Library({
   return (
     <div className="library">
       <aside className="library-rail" aria-label="Library index">
-        <div className="library-filters" role="tablist" aria-label="Artifact type">
-          <button type="button" role="tab" aria-selected={filter === "all"} onClick={() => setFilter("all")}>
-            All <span className="library-pill-count">{counts.all}</span>
-          </button>
-          <button type="button" role="tab" aria-selected={filter === "docs"} onClick={() => setFilter("docs")}>
-            Docs <span className="library-pill-count">{counts.docs}</span>
-          </button>
-          <button type="button" role="tab" aria-selected={filter === "screens"} onClick={() => setFilter("screens")}>
-            Screens <span className="library-pill-count">{counts.screens}</span>
-          </button>
-        </div>
+        {controlledFilter === undefined ? (
+          <div className="library-filters" role="tablist" aria-label="Artifact type">
+            <button type="button" role="tab" aria-selected={filter === "all"} onClick={() => setFilter("all")}>
+              All <span className="library-pill-count">{counts.all}</span>
+            </button>
+            <button type="button" role="tab" aria-selected={filter === "docs"} onClick={() => setFilter("docs")}>
+              Docs <span className="library-pill-count">{counts.docs}</span>
+            </button>
+            <button type="button" role="tab" aria-selected={filter === "screens"} onClick={() => setFilter("screens")}>
+              Screens <span className="library-pill-count">{counts.screens}</span>
+            </button>
+          </div>
+        ) : null}
 
         <div className="library-list">
           {sections.length === 0 ? (
