@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  CanvasGlyph,
+  RecordGlyph,
   ScoutAppFrame,
   StandaloneRecordRouter,
   navigateBrowser,
+  useBrowserLocation,
   useScoutThinHost,
+  type ScoutPageTab,
   type ScoutThinStatusBase,
 } from "scout-app/shell";
 import { api, count, type CanvasData, type Note, type Pointer, type Screen, type Session, type Show } from "./api";
@@ -21,6 +25,11 @@ const SETUP = "npx openscout-app/studio setup";
 interface StudioHostStatus extends ScoutThinStatusBase {
   localSessions: number;
 }
+
+const STUDIO_PAGES: readonly ScoutPageTab[] = [
+  { id: "canvas", label: "Canvas", route: "/", icon: CanvasGlyph, match: (p) => p === "/" || p.startsWith("/p/") },
+  { id: "library", label: "Library", route: "/library", icon: RecordGlyph },
+];
 
 function readView(): View {
   try { return { ...NO_VIEW, ...JSON.parse(localStorage.getItem("scout-studio:view") || localStorage.getItem("scout-canvas:view") || "{}") }; } catch { return NO_VIEW; }
@@ -49,9 +58,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [query, setQuery] = useState("");
-  const [surface, setSurface] = useState<"canvas" | "library">(() =>
-    new URLSearchParams(location.search).get("view") === "library" ? "library" : "canvas",
-  );
+  const { pathname, search: locSearch } = useBrowserLocation();
+  const isLibrary = pathname === "/library" || pathname.startsWith("/library/") || new URLSearchParams(locSearch).get("view") === "library";
   const [reading, setReading] = useState<{ show: Show; shows?: Show[] } | null>(null);
   const [fanned, setFanned] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<Filter>("all");
@@ -59,17 +67,6 @@ export function App() {
   const [view, setView] = useState<View>(readView);
   useEffect(() => { try { localStorage.setItem("scout-studio:view", JSON.stringify(view)); } catch {} }, [view]);
   const viewing = view.hiddenProjects.length > 0 || view.hiddenSessions.length > 0 || view.agents !== "all";
-  // "/" goes to the search, as on Scout
-  const find = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const on = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement;
-      if (e.key === "/" && !/^(INPUT|TEXTAREA)$/.test(t.tagName) && !t.isContentEditable) { e.preventDefault(); find.current?.focus(); }
-      if (e.key === "Escape" && t === find.current) { setQuery(""); find.current?.blur(); }
-    };
-    window.addEventListener("keydown", on);
-    return () => window.removeEventListener("keydown", on);
-  }, []);
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<Open | null>(readHash);
   // the session a link was opened for; it stays after its screen is closed, so the canvas stays put
@@ -235,107 +232,62 @@ export function App() {
       }
     : null;
 
-  const switchSurface = (next: "canvas" | "library") => {
-    setSurface(next);
-    const url = new URL(location.href);
-    if (next === "library") url.searchParams.set("view", "library");
-    else url.searchParams.delete("view");
-    history.replaceState(null, "", url.pathname + url.search + url.hash);
-  };
+  const headerActions = data ? (
+    <span className="chip counts">
+      {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
+      {count(counts.sessions, "session")}
+    </span>
+  ) : null;
+
+  const studioSettingsExtra = (
+    <div className="s-thin-settings-row">
+      <div>
+        <h2>History window</h2>
+        <p>How far back Canvas and Library load agent sessions and shown files.</p>
+      </div>
+      <div className="s-thin-settings-seg" role="radiogroup" aria-label="History window">
+        {[4, 24, 72].map((h) => (
+          <button
+            key={h}
+            type="button"
+            role="radio"
+            aria-checked={hours === h}
+            onClick={() => pick(h)}
+          >
+            {h === 4 ? "4 hours" : h === 24 ? "24 hours" : "3 days"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
-    <div className="studio-chrome">
-      <header className="studio-masthead">
-        <div className="studio-masthead-left">
-          <a
-            className="studio-brand-mark"
-            href="/"
-            aria-label="Scout"
-            onClick={(e) => { e.preventDefault(); switchSurface("canvas"); navigateBrowser("/"); }}
-          >
-            <svg viewBox="5 -4 214 244" width="18" height="18" aria-hidden="true">
-              <path d="M103.01 13.21 Q112 8 120.99 13.21 L198.01 57.79 Q207 63 207 73.39 L207 162.61 Q207 173 198.01 178.21 L120.99 222.79 Q112 228 103.01 222.79 L25.99 178.21 Q17 173 17 162.61 L17 73.39 Q17 63 25.99 57.79 Z" fill="none" stroke="currentColor" strokeWidth="22" strokeLinejoin="round" />
-              <path d="M112 70 154 94v48l-42 24-42-24V94Z" fill="currentColor" />
-            </svg>
-          </a>
-          <span className="studio-nav-sep" aria-hidden="true" />
-          <nav className="studio-nav" aria-label="Views">
-            <a
-              href="/"
-              className="studio-nav-link"
-              aria-current={surface === "canvas" ? "page" : undefined}
-              onClick={(e) => { e.preventDefault(); switchSurface("canvas"); }}
-            >
-              Canvas
-            </a>
-            <a
-              href="/?view=library"
-              className="studio-nav-link"
-              aria-current={surface === "library" ? "page" : undefined}
-              onClick={(e) => { e.preventDefault(); switchSurface("library"); }}
-            >
-              Library
-            </a>
-          </nav>
-        </div>
-
-        <label className="studio-masthead-search">
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <circle cx="7" cy="7" r="4.8" fill="none" stroke="currentColor" strokeWidth="1.6" />
-            <path d="m10.6 10.6 3.4 3.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-          <input
-            ref={find}
-            className="studio-search-input"
-            placeholder="Search screens, sessions, docs…"
-            aria-label="Search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          {query ? (
-            <button
-              type="button"
-              className="studio-search-clear"
-              aria-label="Clear search"
-              onClick={() => setQuery("")}
-            >
-              ×
-            </button>
-          ) : (
-            <kbd aria-hidden="true">/</kbd>
-          )}
-        </label>
-
-        <div className="studio-masthead-right">
-          {data && (
-            <span className="chip counts">
-              {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
-              {count(counts.sessions, "session")}
-            </span>
-          )}
-          <span className="s-thin-status" data-tone={badge.tone} title={badge.detail ?? badge.label} role="status">
-            <span className="s-thin-status-dot" aria-hidden="true" />
-            <span>{badge.label}</span>
-          </span>
-        </div>
-      </header>
-
-      <ScoutAppFrame
-        product="Studio"
-        variant="canvas"
-        rail="full"
-        status={badge}
-        setupCallout={callout}
-      >
-      <StandaloneRecordRouter product="Studio" rail="wide" navigate={navigateBrowser}>
+    <ScoutAppFrame
+      product="Scout"
+      pages={STUDIO_PAGES}
+      activePageId={isLibrary ? "library" : "canvas"}
+      chrome="sidebar"
+      settings={{ extra: studioSettingsExtra }}
+      variant="canvas"
+      rail="full"
+      status={badge}
+      setupCallout={callout}
+      headerActions={headerActions}
+      search={{
+        value: query,
+        onChange: setQuery,
+        placeholder: "Search screens, sessions, docs…",
+      }}
+    >
+      <StandaloneRecordRouter product="Scout" rail="wide" navigate={navigateBrowser}>
         <div className="studio-standalone-surface">
           <main className="field">
-            {surface === "library" ? (
+            {isLibrary ? (
               <Library
                 data={data}
                 query={query}
                 onOpenStage={(sessionId, hash) => {
-                  switchSurface("canvas");
+                  navigateBrowser("/");
                   show({ session: sessionId, hash });
                 }}
               />
@@ -381,6 +333,5 @@ export function App() {
         </div>
       </StandaloneRecordRouter>
     </ScoutAppFrame>
-    </div>
   );
 }
