@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scout Studio</title>
+    <link rel="icon" href="/scout-glyph-ink.svg" type="image/svg+xml" />
+    <script type="module" crossorigin src="/assets/index-D0mYVpoL.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CSgwCLY2.css">
+  <style id="scout-boot-css">
+:root {
+  color-scheme: dark light;
+  --sb-bg: #0c0d10;
+  --sb-surface: #12141a;
+  --sb-border: rgba(255, 255, 255, 0.08);
+  --sb-ink: #eceef2;
+  --sb-muted: rgba(236, 238, 242, 0.48);
+  --sb-bar: rgba(236, 238, 242, 0.07);
+  --sb-bar-strong: rgba(236, 238, 242, 0.12);
+  --sb-accent: #e8a33d;
+  --sb-rail-reading: 760px;
+  --sb-rail-wide: 1180px;
+  --sb-rail-gutter: 24px;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --sb-bg: #fbfbfa;
+    --sb-surface: #ffffff;
+    --sb-border: rgba(16, 18, 24, 0.1);
+    --sb-ink: #18191c;
+    --sb-muted: rgba(21, 23, 28, 0.5);
+    --sb-bar: rgba(21, 23, 28, 0.06);
+    --sb-bar-strong: rgba(21, 23, 28, 0.11);
+    --sb-accent: #b86e00;
+  }
+}
+@media (max-width: 560px) {
+  :root { --sb-rail-gutter: 16px; }
+}
+body:has(.sb-boot) { margin: 0; padding: 0; background: var(--sb-bg); }
+@keyframes sbPulse { 0%, 100% { opacity: 0.92; } 50% { opacity: 0.46; } }
+.sb-boot { height: 100vh; display: flex; flex-direction: column; background: var(--sb-bg); color: var(--sb-ink); font-family: system-ui, sans-serif; }
+.sb-boot main { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable both-edges; }
+.sb-boot-nav { box-sizing: border-box; flex: none; height: 40px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--sb-border); background: var(--sb-bg); }
+.sb-boot-brand { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; line-height: 1; letter-spacing: -0.005em; }
+.sb-boot-pill { box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; height: 24px; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--sb-muted); padding: 0 8px; border: 1px solid var(--sb-border); border-radius: 4px; }
+.sb-boot-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--sb-accent); animation: sbPulse 1.5s ease-in-out infinite; }
+.sb-boot .sb-skel { --sb-rail: var(--sb-rail-reading); width: 100%; max-width: calc(var(--sb-rail) + 2 * var(--sb-rail-gutter)); margin-inline: auto; padding: 20px var(--sb-rail-gutter); box-sizing: border-box; animation: sbPulse 1.6s ease-in-out infinite; }
+.sb-boot .sb-skel[data-rail="wide"] { --sb-rail: var(--sb-rail-wide); }
+.sb-boot .sb-skel[data-rail="full"] { max-width: none; padding-inline: 0; }
+.sb-skel-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--sb-border); }
+.sb-skel-chip { height: 24px; border-radius: 4px; background: var(--sb-bar); border: 1px solid var(--sb-border); }
+.sb-skel-card { border: 1px solid var(--sb-border); background: var(--sb-surface); border-radius: 6px; padding: 14px 16px; margin-bottom: 10px; }
+.sb-skel-row { display: grid; grid-template-columns: 76px 140px minmax(0, 1fr) 76px 72px minmax(0, 1fr); gap: 12px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--sb-border); }
+.sb-skel-line { height: 11px; border-radius: 3px; background: var(--sb-bar); }
+.sb-skel-line--strong { height: 13px; background: var(--sb-bar-strong); }
+.sb-skel-cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.sb-skel-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.sb-skel-row > *, .sb-skel-cols .sb-skel-line, .sb-skel-grid .sb-skel-line { max-width: 100%; }
+@media (max-width: 560px) {
+  .sb-skel-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sb-skel-cols, .sb-skel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-boot-dot, .sb-skel, .s-page-skeleton .sb-skel, .sb-boot .sb-skel { animation: none; }
+}
+</style>
+</head>
+  <body>
+    <div id="root"><div class="sb-boot" data-scout-boot="canvas">
+    <header class="sb-boot-nav">
+      <span class="sb-boot-brand"><svg viewBox="0 0 18 18" width="18" height="18" fill="none" aria-hidden="true"><path d="M9 1 16 5v8l-7 4-7-4V5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 4.43 13 6.71v4.58L9 13.57 5 11.29V6.71Z" fill="currentColor"/></svg><span>Scout Studio</span></span>
+      <span class="sb-boot-pill"><span class="sb-boot-dot"></span><span>Reading local Scout state</span></span>
+    </header>
+    <main><div class="sb-skel s-surface-rail" data-rail="wide" role="status" aria-label="Loading Studio">
+        <div class="sb-skel-grid">
+          <div class="sb-skel-card">
+            <div class="sb-skel-chip" style="height:150px;width:100%;margin-bottom:10px"></div>
+            <div class="sb-skel-line sb-skel-line--strong" style="width:68%;margin-bottom:6px"></div>
+            <div class="sb-skel-line" style="width:44%"></div>
+          </div><div class="sb-skel-card">
+            <div class="sb-skel-chip" style="height:150px;width:100%;margin-bottom:10px"></div>
+            <div class="sb-skel-line sb-skel-line--strong" style="width:68%;margin-bottom:6px"></div>
+            <div class="sb-skel-line" style="width:44%"></div>
+          </div><div class="sb-skel-card">
+            <div class="sb-skel-chip" style="height:150px;width:100%;margin-bottom:10px"></div>
+            <div class="sb-skel-line sb-skel-line--strong" style="width:68%;margin-bottom:6px"></div>
+            <div class="sb-skel-line" style="width:44%"></div>
+          </div>
+        </div>
+      </div></main>
+  </div></div>
+  </body>
+</html>

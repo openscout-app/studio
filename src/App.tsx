@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ScoutAppFrame,
+  StandaloneRecordRouter,
+  navigateBrowser,
+  useScoutThinHost,
+  type ScoutThinStatusBase,
+} from "scout-app/shell";
 import { api, count, type CanvasData, type Note, type Pointer, type Screen, type Session, type Show } from "./api";
 import { Canvas } from "./Canvas";
 import { Arrival, Progress } from "./Loading";
@@ -8,7 +15,11 @@ import { layout, type Area } from "./scene";
 import { readPlace } from "./place";
 import { NO_VIEW, START_HOURS, ViewControls, wider, type Filter, type View } from "./Controls";
 
-const SETUP = "npx github:openscout-app/studio setup";
+const SETUP = "npx openscout-app/studio setup";
+
+interface StudioHostStatus extends ScoutThinStatusBase {
+  localSessions: number;
+}
 
 function readView(): View {
   try { return { ...NO_VIEW, ...JSON.parse(localStorage.getItem("scout-studio:view") || localStorage.getItem("scout-canvas:view") || "{}") }; } catch { return NO_VIEW; }
@@ -190,60 +201,81 @@ export function App() {
   }, [picked, linked, empty, hours]);
 
   const onOpen = useCallback((a: Area, s: Screen, at?: { x: number; y: number }) => show({ session: a.session.id, hash: s.hash, at }), []);
+  const { status: hostStatus, installing, runSetup } = useScoutThinHost<StudioHostStatus>({
+    statusPath: "/api/host-status",
+  });
+
+  const runtimeUp = data ? data.scout.up : Boolean(hostStatus?.runtimeUp);
+  const badge = !data && !hostStatus
+    ? { label: "Checking Scout", tone: "loading" as const }
+    : runtimeUp
+      ? {
+          label: "Runtime connected",
+          tone: "ready" as const,
+          detail: hostStatus?.runtimeUrl || "Scout's runtime answers on this host; notes go to sessions through it",
+        }
+      : {
+          label: hostStatus ? `Local canvas · ${hostStatus.localSessions}` : "Scout isn't running",
+          tone: "local" as const,
+          detail: `Scout's runtime isn't answering; notes wait until it is. To start it: ${SETUP}`,
+        };
+
+  const callout = (data && !data.scout.up) || (hostStatus && !hostStatus.runtimeUp)
+    ? {
+        title: "Scout runtime is not running yet.",
+        description: "Local screenshots still appear on the canvas. Start Scout's runtime to deliver pinned notes back to sessions.",
+        command: SETUP,
+        actionLabel: installing ? "Starting…" : "Start runtime",
+        onAction: installing ? undefined : () => void runSetup(),
+      }
+    : null;
+
+  const headerActions = data ? (
+    <span className="chip counts">
+      {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
+      {count(counts.sessions, "session")}
+    </span>
+  ) : null;
 
   return (
-    <div className="app">
-      <header className="bar">
-        <div className="bar-side">
-          <a className="brand" href="/" aria-label="Scout Studio">
-            <span className="mark" aria-hidden="true" />Scout Studio
-          </a>
-        </div>
-        <label className="find">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.8" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="m10.6 10.6 3.4 3.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-          <input ref={find} className="search" placeholder="Search screens, sessions, repos" aria-label="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
-          <kbd aria-hidden="true">/</kbd>
-        </label>
-        <div className="bar-side end">
-          {data && (
-            <span className="chip counts">
-              {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
-              {count(counts.sessions, "session")}
-            </span>
+    <ScoutAppFrame
+      product="Studio"
+      variant="canvas"
+      rail="full"
+      status={badge}
+      setupCallout={callout}
+      headerActions={headerActions}
+      search={{
+        value: query,
+        onChange: setQuery,
+        placeholder: "Search screens, sessions, repos",
+      }}
+    >
+      <StandaloneRecordRouter product="Studio" rail="wide" navigate={navigateBrowser}>
+        <div className="studio-standalone-surface">
+          <main className="field">
+            <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all" || viewing} ready={ready}
+              returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
+              controls={data && <ViewControls data={data} hours={hours} setHours={pick} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
+              {scene && ready && (
+                <Canvas key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened} onShow={setReading}
+                  onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
+              )}
+              {data && <Progress loading={data.loading} counts={counts} />}
+            </Arrival>
+          </main>
+          {missing && <div className="toast" role="alert" onClick={() => { setMissing(null); history.replaceState(null, "", "/"); }}>{missing}</div>}
+          {reading && <Reader show={reading} onClose={() => setReading(null)} />}
+          {target && open && (
+            <Stage
+              key={target.session.id} session={target.session} project={target.project} screens={target.screens} index={target.index}
+              notes={notes} at={open.at} pointer={open.pointer} scoutUp={!!data?.scout.up}
+              onIndex={(i) => show({ session: target.session.id, hash: target.screens[i].hash })}
+              onClose={() => show(null)} onNotes={loadNotes}
+            />
           )}
-          {data && <span className="sep" />}
-          <span className="chip runtime-status" title={data?.scout.up ? "Scout's runtime answers on this Mac; notes go to sessions through it" : `Scout's runtime isn't answering; notes wait until it is. To start it: ${SETUP}`}>
-            <span className={`dot ${data ? (data.scout.up ? "ok" : "bad") : "accent"}`} />
-            {data ? (data.scout.up ? "Scout is up" : "Scout isn't running") : "Looking for Scout…"}
-          </span>
         </div>
-      </header>
-      <main className="field">
-        {data && !data.scout.up && (
-          <aside className="setup-colophon" aria-label="Scout setup">
-            <p>Notes wait until Scout is running. Start it with <code>{SETUP}</code>.</p>
-          </aside>
-        )}
-        <Arrival data={data} error={error} hours={hours} filtered={!!query || filter !== "all" || viewing} ready={ready}
-          returning={linked ? "link" : place ? "back" : undefined} landedOn={landedOn}
-          controls={data && <ViewControls data={data} hours={hours} setHours={pick} filter={filter} setFilter={setFilter} view={view} setView={setView} />}>
-          {scene && ready && (
-            <Canvas key={`${hours}:${landKey.startsWith("link:") ? landKey : ""}`} frames={scene.frames} bounds={scene.bounds} notes={notes} focus={focus} onOpen={onOpen} opened={opened} onShow={setReading}
-              onMore={(id) => setOpened((o) => { const n = new Set(o); n.has(id) ? n.delete(id) : n.add(id); return n; })} />
-          )}
-          {data && <Progress loading={data.loading} counts={counts} />}
-        </Arrival>
-      </main>
-      {missing && <div className="toast" role="alert" onClick={() => { setMissing(null); history.replaceState(null, "", "/"); }}>{missing}</div>}
-      {reading && <Reader show={reading} onClose={() => setReading(null)} />}
-      {target && open && (
-        <Stage
-          key={target.session.id} session={target.session} project={target.project} screens={target.screens} index={target.index}
-          notes={notes} at={open.at} pointer={open.pointer} scoutUp={!!data?.scout.up}
-          onIndex={(i) => show({ session: target.session.id, hash: target.screens[i].hash })}
-          onClose={() => show(null)} onNotes={loadNotes}
-        />
-      )}
-    </div>
+      </StandaloneRecordRouter>
+    </ScoutAppFrame>
   );
 }

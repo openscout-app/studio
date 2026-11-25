@@ -72,7 +72,7 @@ if (args[0] === "mcp") {
   const open = !args.includes("--no-open");
   const dist = path.join(path.dirname(BIN), "..", "dist", "index.html");
   if (!fs.existsSync(dist)) fail("the app isn't built. Run `npm run build` first.");
-  const show = (url) => { if (open) execFile("open", [url], () => {}); };
+  const show = (url) => { if (open && process.platform === "darwin") execFile("open", [url], () => {}); };
   for (let port = first; port < first + 10; port++) {
     try {
       await serve(port);
