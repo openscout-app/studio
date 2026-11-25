@@ -243,51 +243,90 @@ export function App() {
     history.replaceState(null, "", url.pathname + url.search + url.hash);
   };
 
-  const headerActions = (
-    <div className="studio-header-right">
-      <div className="studio-view-tabs" role="tablist" aria-label="Studio view">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={surface === "canvas"}
-          className="studio-view-tab"
-          onClick={() => switchSurface("canvas")}
-        >
-          Canvas
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={surface === "library"}
-          className="studio-view-tab"
-          onClick={() => switchSurface("library")}
-        >
-          Library
-        </button>
-      </div>
-      {data && (
-        <span className="chip counts">
-          {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
-          {count(counts.sessions, "session")}
-        </span>
-      )}
-    </div>
-  );
-
   return (
-    <ScoutAppFrame
-      product="Studio"
-      variant="canvas"
-      rail="full"
-      status={badge}
-      setupCallout={callout}
-      headerActions={headerActions}
-      search={{
-        value: query,
-        onChange: setQuery,
-        placeholder: "Search screens, sessions, repos",
-      }}
-    >
+    <div className="studio-chrome">
+      <header className="studio-masthead">
+        <div className="studio-masthead-left">
+          <a
+            className="studio-brand-mark"
+            href="/"
+            aria-label="Scout"
+            onClick={(e) => { e.preventDefault(); switchSurface("canvas"); navigateBrowser("/"); }}
+          >
+            <svg viewBox="5 -4 214 244" width="18" height="18" aria-hidden="true">
+              <path d="M103.01 13.21 Q112 8 120.99 13.21 L198.01 57.79 Q207 63 207 73.39 L207 162.61 Q207 173 198.01 178.21 L120.99 222.79 Q112 228 103.01 222.79 L25.99 178.21 Q17 173 17 162.61 L17 73.39 Q17 63 25.99 57.79 Z" fill="none" stroke="currentColor" strokeWidth="22" strokeLinejoin="round" />
+              <path d="M112 70 154 94v48l-42 24-42-24V94Z" fill="currentColor" />
+            </svg>
+          </a>
+          <span className="studio-nav-sep" aria-hidden="true" />
+          <nav className="studio-nav" aria-label="Views">
+            <a
+              href="/"
+              className="studio-nav-link"
+              aria-current={surface === "canvas" ? "page" : undefined}
+              onClick={(e) => { e.preventDefault(); switchSurface("canvas"); }}
+            >
+              Canvas
+            </a>
+            <a
+              href="/?view=library"
+              className="studio-nav-link"
+              aria-current={surface === "library" ? "page" : undefined}
+              onClick={(e) => { e.preventDefault(); switchSurface("library"); }}
+            >
+              Library
+            </a>
+          </nav>
+        </div>
+
+        <label className="studio-masthead-search">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+            <path d="m10.6 10.6 3.4 3.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+          <input
+            ref={find}
+            className="studio-search-input"
+            placeholder="Search screens, sessions, docs…"
+            aria-label="Search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query ? (
+            <button
+              type="button"
+              className="studio-search-clear"
+              aria-label="Clear search"
+              onClick={() => setQuery("")}
+            >
+              ×
+            </button>
+          ) : (
+            <kbd aria-hidden="true">/</kbd>
+          )}
+        </label>
+
+        <div className="studio-masthead-right">
+          {data && (
+            <span className="chip counts">
+              {counts.working > 0 && <><span className="dot accent" />{counts.working} working · </>}
+              {count(counts.sessions, "session")}
+            </span>
+          )}
+          <span className="s-thin-status" data-tone={badge.tone} title={badge.detail ?? badge.label} role="status">
+            <span className="s-thin-status-dot" aria-hidden="true" />
+            <span>{badge.label}</span>
+          </span>
+        </div>
+      </header>
+
+      <ScoutAppFrame
+        product="Studio"
+        variant="canvas"
+        rail="full"
+        status={badge}
+        setupCallout={callout}
+      >
       <StandaloneRecordRouter product="Studio" rail="wide" navigate={navigateBrowser}>
         <div className="studio-standalone-surface">
           <main className="field">
@@ -342,5 +381,6 @@ export function App() {
         </div>
       </StandaloneRecordRouter>
     </ScoutAppFrame>
+    </div>
   );
 }
