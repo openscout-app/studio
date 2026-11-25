@@ -14,16 +14,22 @@ const NAMES: Record<string, string> = {
   github: "GitHub",
   amp: "Amp",
   devin: "Devin",
+  quad: "Quad",
+  bridge: "Bridge",
+  scout: "Scout",
 };
 
 const TINTS: Record<string, string> = {
   claude: "#d97757",
-  codex: "#8b9cff",
+  codex: "#10a37f",
   antigravity: "#4285f4",
-  gemini: "#5b93f5",
-  kimi: "#4aa3ff",
-  opencode: "#f0a35e",
-  amp: "#f5634a",
+  gemini: "#4285f4",
+  kimi: "#2f80ed",
+  opencode: "#ea8c3b",
+  amp: "#f2543a",
+  quad: "#8b5cf6",
+  bridge: "#e59b2d",
+  scout: "#e59b2d",
 };
 
 export function harnessKey(harness = "claude"): string {
@@ -56,6 +62,9 @@ export function harnessKey(harness = "claude"): string {
     pi: "pi",
     hermes: "hermes",
     devin: "devin",
+    quad: "quad",
+    bridge: "bridge",
+    scout: "scout",
   };
   return aliases[base] ?? aliases[raw] ?? raw;
 }
@@ -99,8 +108,27 @@ const CODEX_GLYPH = (
   />
 );
 
+const SCOUT_GLYPH = (
+  <g transform="scale(1.3333)">
+    <path d="M9 1 16 5v8l-7 4-7-4V5Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    <path d="M9 4.43 13 6.71v4.58L9 13.57 5 11.29V6.71Z" fill="currentColor" />
+  </g>
+);
+
+const QUAD_GLYPH = (
+  <g fill="currentColor">
+    <rect x={5.5} y={5.5} width={5.4} height={5.4} rx={1.3} />
+    <rect x={13.1} y={5.5} width={5.4} height={5.4} rx={1.3} />
+    <rect x={5.5} y={13.1} width={5.4} height={5.4} rx={1.3} />
+    <rect x={13.1} y={13.1} width={5.4} height={5.4} rx={1.3} />
+  </g>
+);
+
 const EXTRA_GLYPHS: Record<string, ReactNode> = {
   codex: CODEX_GLYPH,
+  bridge: SCOUT_GLYPH,
+  scout: SCOUT_GLYPH,
+  quad: QUAD_GLYPH,
   kimi: (
     <g fill="currentColor">
       <path d="M4.5 3h3.4v7.4L14.7 3h4.5l-7.9 8.5L19.8 21h-4.6l-7.3-8.2V21H4.5Z" />

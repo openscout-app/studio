@@ -431,8 +431,8 @@ button { font: inherit; color: inherit; }
 .agent-cursor.flip .cursor-badge { left: auto; right: 6px; flex-direction: row-reverse; }
 .agent-cursor .cursor-coin {
   border-width: 1.5px;
-  border-color: color-mix(in srgb, var(--coin-tint, var(--ink)) 38%, var(--line-strong));
-  background: var(--surface);
+  border-color: color-mix(in srgb, var(--coin-tint, var(--ink)) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--coin-tint, transparent) 12%, var(--surface));
   box-shadow: var(--shadow);
 }
 .agent-cursor .tag {
@@ -446,8 +446,7 @@ button { font: inherit; color: inherit; }
 .agent-cursor[data-state="recent"] .drift,
 .agent-cursor[data-state="recent"] .sway > path { animation: none; }
 .agent-cursor[data-state="open"] .tag { border-color: var(--accent-line); }
-.agent-cursor[data-state="recent"] { opacity: 0.82; z-index: 1; }
-.agent-cursor[data-state="recent"] .fill { fill: var(--surface); }
+.agent-cursor[data-state="recent"] { z-index: 1; }
 @media (prefers-reduced-motion: reduce) {
   .agent-cursor { transition: none; }
   .agent-cursor .drift, .agent-cursor .sway > path { animation: none; }
@@ -456,8 +455,8 @@ button { font: inherit; color: inherit; }
 .harness-coin {
   display: inline-grid; place-items: center; flex: none; border-radius: 50%;
   font: 600 9px/1 var(--mono);
-  border: 1px solid color-mix(in srgb, var(--coin-tint, var(--ink)) 24%, var(--line-strong));
-  background: var(--bg); color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--coin-tint, var(--ink)) 48%, var(--line-strong));
+  background: color-mix(in srgb, var(--coin-tint, transparent) 10%, var(--bg)); color: var(--ink);
 }
 
 /* shown files: what an agent put in front of the person with scout show */
