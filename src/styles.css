@@ -2,7 +2,7 @@
 
 :root {
   --bg: var(--hud-bg, var(--scout-bg));
-  --surface: oklch(0.235 0.0039 286.1);
+  --surface: var(--hud-surface, oklch(0.235 0.0039 286.1));
   --ink: var(--hud-ink, var(--scout-ink));
   --muted: var(--scout-muted);
   --dim: var(--scout-faint);
@@ -13,33 +13,70 @@
   --shadow: 0 12px 34px oklch(0.08 0.004 260 / 0.45);
   --line-a: 9%;
   --line-strong-a: 16%;
-  color-scheme: dark;
-}
-@media (prefers-color-scheme: light) {
-  :root {
-    --surface: oklch(0.998 0.001 286);
-    --ok: oklch(0.58 0.16 155);
-    --warn: oklch(0.62 0.15 85);
-    --bad: oklch(0.56 0.19 25);
-    --shadow: 0 12px 30px oklch(0.42 0.02 70 / 0.14);
-    --line-a: 11%;
-    --line-strong-a: 20%;
-    color-scheme: light;
-  }
-}
-:root {
   --masthead-line: color-mix(in srgb, var(--ink) 12%, transparent);
   --line: color-mix(in srgb, var(--ink) var(--line-a), transparent);
   --line-strong: color-mix(in srgb, var(--ink) var(--line-strong-a), transparent);
   --ground: color-mix(in oklab, var(--ink) 3%, var(--bg));
-  --raised: color-mix(in oklab, var(--ink) 5%, var(--surface));
+  --raised: color-mix(in oklab, var(--ink) 8%, var(--surface));
   --body: color-mix(in oklab, var(--ink) 82%, var(--bg));
   --faint: color-mix(in oklab, var(--ink) 30%, var(--bg));
   --accent-wash: color-mix(in oklab, var(--accent) 14%, transparent);
   --accent-line: color-mix(in oklab, var(--accent) 45%, transparent);
   --sans: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
-
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-scout-theme="dark"]):not([data-hudson-theme="dark"]) {
+    --surface: var(--hud-surface, #ffffff);
+    --ok: oklch(0.58 0.16 155);
+    --warn: oklch(0.62 0.15 85);
+    --bad: oklch(0.56 0.19 25);
+    --shadow: 0 12px 30px oklch(0.42 0.02 70 / 0.14);
+    --line-a: 11%;
+    --line-strong-a: 20%;
+    --ground: color-mix(in oklab, var(--ink) 3%, var(--bg));
+    --raised: color-mix(in oklab, var(--ink) 8%, var(--bg));
+    color-scheme: light;
+  }
+}
+:root[data-scout-theme="light"],
+:root[data-hudson-theme="light"],
+[data-scout-theme="light"],
+[data-hudson-theme="light"] {
+  --bg: var(--hud-bg, var(--scout-bg, #fbfbfa));
+  --surface: var(--hud-surface, #ffffff);
+  --ink: var(--hud-ink, var(--scout-ink, #18191c));
+  --ok: oklch(0.58 0.16 155);
+  --warn: oklch(0.62 0.15 85);
+  --bad: oklch(0.56 0.19 25);
+  --shadow: 0 12px 30px oklch(0.42 0.02 70 / 0.14);
+  --line-a: 11%;
+  --line-strong-a: 20%;
+  --ground: color-mix(in oklab, var(--ink) 3%, var(--bg));
+  --raised: color-mix(in oklab, var(--ink) 8%, var(--bg));
+  --body: color-mix(in oklab, var(--ink) 82%, var(--bg));
+  --faint: color-mix(in oklab, var(--ink) 38%, var(--bg));
+  color-scheme: light;
+}
+:root[data-scout-theme="dark"],
+:root[data-hudson-theme="dark"],
+[data-scout-theme="dark"],
+[data-hudson-theme="dark"] {
+  --bg: var(--hud-bg, var(--scout-bg, #0c0d10));
+  --surface: var(--hud-surface, oklch(0.235 0.0039 286.1));
+  --ink: var(--hud-ink, var(--scout-ink, #eceef2));
+  --ok: oklch(0.72 0.15 155);
+  --warn: oklch(0.78 0.14 85);
+  --bad: oklch(0.68 0.18 25);
+  --shadow: 0 12px 34px oklch(0.08 0.004 260 / 0.45);
+  --line-a: 9%;
+  --line-strong-a: 16%;
+  --ground: color-mix(in oklab, var(--ink) 3%, var(--bg));
+  --raised: color-mix(in oklab, var(--ink) 9%, var(--surface));
+  --body: color-mix(in oklab, var(--ink) 82%, var(--bg));
+  --faint: color-mix(in oklab, var(--ink) 30%, var(--bg));
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -110,10 +147,11 @@ button { font: inherit; color: inherit; }
 .search:focus { border-color: var(--line-strong); }
 .search:focus + kbd, .search:not(:placeholder-shown) + kbd { display: none; }
 .bar .sep { width: 1px; height: 20px; background: var(--line); }
-.seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-.seg button { background: none; border: 0; padding: 4px 10px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--surface); }
+.seg button { background: transparent; border: 0; padding: 4px 10px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .seg button + button { border-left: 1px solid var(--line); }
-.seg button[aria-pressed="true"] { background: var(--raised); color: var(--ink); }
+.seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"] { background: var(--raised); color: var(--ink); font-weight: 500; }
 .chip { font-size: var(--text-md); display: inline-flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
 .dot.ok { background: var(--ok); }

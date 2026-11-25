@@ -62,11 +62,6 @@ export function ViewControls({ data, hours, setHours, filter, setFilter, view, s
       <div className="seg" role="group" aria-label="How far back">
         {WINDOWS.map((w) => <button key={w.h} aria-pressed={hours === w.h} onClick={() => setHours(w.h)}>{w.label}</button>)}
       </div>
-      <div className="seg" role="group" aria-label="Which screens">
-        <button aria-pressed={filter === "all"} onClick={() => setFilter("all")}>All</button>
-        <button aria-pressed={filter === "changed"} onClick={() => setFilter("changed")}>Before / after</button>
-        <button aria-pressed={filter === "notes"} onClick={() => setFilter("notes")}>With notes</button>
-      </div>
       <Pop label="Projects" badge={hp.size ? `${shownProjects}/${projects.length}` : undefined}>
         <div className="pop-head">
           <span>Projects</span>
