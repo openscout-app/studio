@@ -21,15 +21,11 @@ const NAMES: Record<string, string> = {
 
 const TINTS: Record<string, string> = {
   claude: "#d97757",
-  codex: "#10a37f",
   antigravity: "#4285f4",
   gemini: "#4285f4",
   kimi: "#2f80ed",
   opencode: "#ea8c3b",
   amp: "#f2543a",
-  quad: "#8b5cf6",
-  bridge: "#e59b2d",
-  scout: "#e59b2d",
 };
 
 export function harnessKey(harness = "claude"): string {
