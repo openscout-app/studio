@@ -189,11 +189,12 @@ export function Canvas({ frames, bounds, notes, focus, onOpen, onMore, opened, o
         {frames.flatMap((f) => f.areas).filter((a) => inView(a.box)).map((a) => (
           <AreaView key={a.session.id} area={a} inView={inView} byScreen={byScreen} moved={moved} onOpen={onOpen} onMore={onMore} onShow={onShow} onFanOut={onFanOut} opened={opened.has(a.session.id)} />
         ))}
-        {present.filter((w) => inView(w.area.box)).map((w) => (
+        {present.filter((w) => inView(w.area.box)).map((w, idx) => (
           <AgentCursor
             harness={w.area.session.harness}
             key={w.area.session.id}
             state={w.state}
+            phase={-((idx * 1.15) % 5.6)}
             at={w.at}
             k={cam.k}
             say={w.area.session.now || w.area.session.title}
@@ -243,9 +244,11 @@ function AgentCursor({
   flip,
   harness,
   state,
+  phase = 0,
 }: {
   harness?: string;
   state: "working" | "open" | "recent";
+  phase?: number;
   at: { x: number; y: number };
   k: number;
   say: string;
@@ -255,6 +258,7 @@ function AgentCursor({
 }) {
   const shape = { d: CURSOR_D, vectorEffect: "non-scaling-stroke" as const };
   const statusLabel = state === "working" ? "working on" : state === "open" ? "active on" : "touched";
+  const delayStyle = state !== "recent" && phase ? { animationDelay: `${phase}s` } : undefined;
   return (
     <div
       className={`agent-cursor${flip ? " flip" : ""}`}
@@ -263,12 +267,12 @@ function AgentCursor({
       aria-label={`${harnessName(harness)}, ${statusLabel} ${title}: ${say}`}
       title={`${title}: ${say} (${when})`}
     >
-      <div className="drift">
+      <div className="drift" style={delayStyle}>
         <svg width="32" height="36" viewBox="-6 -3 32 36" aria-hidden="true">
           <g className="sway" transform="scale(0.6)">
-            <path {...shape} className="edge" />
-            <path {...shape} className="fill" />
-            <path {...shape} className="light" />
+            <path {...shape} className="edge" style={delayStyle} />
+            <path {...shape} className="fill" style={delayStyle} />
+            <path {...shape} className="light" style={delayStyle} />
           </g>
         </svg>
         <div className="cursor-badge">
