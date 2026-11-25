@@ -414,8 +414,8 @@ button { font: inherit; color: inherit; }
   position: absolute; z-index: 2; pointer-events: none; transform-origin: 0 0;
   transition: left 900ms cubic-bezier(.3,.7,.2,1), top 900ms cubic-bezier(.3,.7,.2,1);
 }
-.agent-cursor .drift { position: relative; animation: drift 5.6s ease-in-out infinite; }
-@keyframes drift { 0%, 100% { translate: 0 0; } 33% { translate: 2px 1px; } 66% { translate: -1px 2px; } }
+.agent-cursor .drift { position: relative; animation: drift 5.2s ease-in-out infinite; }
+@keyframes drift { 0%, 100% { translate: 0 0; } 33% { translate: 3px 1.5px; } 66% { translate: -1.5px 2.5px; } }
 .agent-cursor .drift > svg {
   position: absolute; left: -6px; top: -3px; overflow: visible;
   filter: drop-shadow(1.2px 1.2px 0 rgba(0,0,0,.18)) drop-shadow(0 3px 6px rgba(0,0,0,.35));
@@ -443,8 +443,6 @@ button { font: inherit; color: inherit; }
 .agent-cursor .who { color: var(--ink); font-family: var(--mono); letter-spacing: .04em; }
 .agent-cursor .say { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .agent-cursor .when { color: var(--dim); font-family: var(--mono); font-size: 10px; font-variant-numeric: tabular-nums; }
-.agent-cursor[data-state="open"] .drift,
-.agent-cursor[data-state="open"] .sway > path,
 .agent-cursor[data-state="recent"] .drift,
 .agent-cursor[data-state="recent"] .sway > path { animation: none; }
 .agent-cursor[data-state="open"] .tag { border-color: var(--accent-line); }
