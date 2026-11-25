@@ -21,6 +21,7 @@ const NAMES: Record<string, string> = {
 
 const TINTS: Record<string, string> = {
   claude: "#d97757",
+  codex: "#4c6ef5",
   antigravity: "#4285f4",
   gemini: "#4285f4",
   kimi: "#2f80ed",
