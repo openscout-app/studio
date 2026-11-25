@@ -271,12 +271,14 @@ function AgentCursor({
             <path {...shape} className="light" />
           </g>
         </svg>
-        <span className="tag">
-          <HarnessCoin harness={harness} size={16} />
-          <span className="who">{harnessName(harness)}</span>
-          {state !== "recent" ? <span className="say">{say}</span> : null}
-          {state === "working" ? <Working /> : <span className="when">{when}</span>}
-        </span>
+        <div className="cursor-badge">
+          <HarnessCoin harness={harness} size={26} className="cursor-coin" />
+          <span className="tag">
+            <span className="who">{harnessName(harness)}</span>
+            {state !== "recent" ? <span className="say">{say}</span> : null}
+            {state === "working" ? <Working /> : <span className="when">{when}</span>}
+          </span>
+        </div>
       </div>
     </div>
   );

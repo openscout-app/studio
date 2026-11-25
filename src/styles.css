@@ -425,12 +425,21 @@ button { font: inherit; color: inherit; }
 .agent-cursor .edge { fill: none; stroke: rgba(0,0,0,.48); stroke-width: 1.8; stroke-linejoin: round; }
 .agent-cursor .fill { fill: #f3ebdd; stroke: rgba(0,0,0,.52); stroke-width: .7; stroke-linejoin: round; }
 .agent-cursor .light { fill: none; stroke: color-mix(in oklab, var(--ink) 38%, transparent); stroke-width: .5; stroke-linejoin: round; }
+.agent-cursor .cursor-badge {
+  position: absolute; left: 16px; top: 15px; display: inline-flex; align-items: center; gap: 5px;
+}
+.agent-cursor.flip .cursor-badge { left: auto; right: 6px; flex-direction: row-reverse; }
+.agent-cursor .cursor-coin {
+  border-width: 1.5px;
+  border-color: color-mix(in srgb, var(--coin-tint, var(--ink)) 38%, var(--line-strong));
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
 .agent-cursor .tag {
-  position: absolute; left: 14px; top: 25px; display: inline-flex; align-items: center; gap: 6px; height: 22px;
-  padding: 0 8px 0 4px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface);
+  display: inline-flex; align-items: center; gap: 6px; height: 22px;
+  padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface);
   white-space: nowrap; font-size: 11px; color: var(--muted); box-shadow: var(--shadow);
 }
-.agent-cursor.flip .tag { left: auto; right: 4px; }
 .agent-cursor .who { color: var(--ink); font-family: var(--mono); letter-spacing: .04em; }
 .agent-cursor .say { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .agent-cursor .when { color: var(--dim); font-family: var(--mono); font-size: 10px; font-variant-numeric: tabular-nums; }
@@ -439,7 +448,7 @@ button { font: inherit; color: inherit; }
 .agent-cursor[data-state="recent"] .drift,
 .agent-cursor[data-state="recent"] .sway > path { animation: none; }
 .agent-cursor[data-state="open"] .tag { border-color: var(--accent-line); }
-.agent-cursor[data-state="recent"] { opacity: 0.78; z-index: 1; }
+.agent-cursor[data-state="recent"] { opacity: 0.82; z-index: 1; }
 .agent-cursor[data-state="recent"] .fill { fill: var(--surface); }
 @media (prefers-reduced-motion: reduce) {
   .agent-cursor { transition: none; }
@@ -447,9 +456,10 @@ button { font: inherit; color: inherit; }
 }
 
 .harness-coin {
-  display: inline-grid; place-items: center; flex: none; border-radius: var(--radius-sm);
+  display: inline-grid; place-items: center; flex: none; border-radius: 50%;
   font: 600 9px/1 var(--mono);
-  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent); background: var(--bg); color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--coin-tint, var(--ink)) 24%, var(--line-strong));
+  background: var(--bg); color: var(--ink);
 }
 
 /* shown files: what an agent put in front of the person with scout show */
