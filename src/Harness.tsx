@@ -1,15 +1,176 @@
-const names: Record<string, string> = { claude: "Claude", codex: "Codex", kimi: "Kimi", antigravity: "Antigravity", cursor: "Cursor", hermes: "Hermes", pi: "pi", grok: "Grok", opencode: "OpenCode" };
-const monograms: Record<string, string> = { claude: "Cl", codex: "CX", kimi: "Ki", antigravity: "AG" };
-const harnessId = (harness: string) => harness.toLowerCase() === "agy" ? "antigravity" : harness.toLowerCase();
+import type { ReactNode } from "react";
 
-export const harnessName = (harness = "claude") => names[harnessId(harness)] || harness;
+const NAMES: Record<string, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  kimi: "Kimi",
+  antigravity: "Antigravity",
+  gemini: "Gemini",
+  cursor: "Cursor",
+  hermes: "Hermes",
+  pi: "pi",
+  grok: "Grok",
+  opencode: "OpenCode",
+  github: "GitHub",
+  amp: "Amp",
+  devin: "Devin",
+};
 
-export function HarnessCoin({ size = 14, harness = "claude" }: { size?: number; harness?: string }) {
-  const name = harnessName(harness);
+const TINTS: Record<string, string> = {
+  claude: "#d97757",
+  codex: "#8b9cff",
+  antigravity: "#4285f4",
+  gemini: "#5b93f5",
+  kimi: "#4aa3ff",
+  opencode: "#f0a35e",
+  amp: "#f5634a",
+};
+
+export function harnessKey(harness = "claude"): string {
+  const raw = harness.trim().toLowerCase();
+  if (!raw) return "claude";
+  if (/^(?:google\s+)?anti-?gravity(?:\s+cli|\s+ide)?$/u.test(raw) || raw === "agy") return "antigravity";
+  const base = raw.replace(/[\s(].*$/, "").replace(/[_-].*$/, "");
+  const aliases: Record<string, string> = {
+    anthropic: "claude",
+    claude: "claude",
+    claudecode: "claude",
+    sonnet: "claude",
+    opus: "claude",
+    openai: "codex",
+    codex: "codex",
+    gpt: "codex",
+    chatgpt: "codex",
+    oai: "codex",
+    xai: "grok",
+    grok: "grok",
+    kimi: "kimi",
+    moonshot: "kimi",
+    google: "gemini",
+    gemini: "gemini",
+    cursor: "cursor",
+    github: "github",
+    opencode: "opencode",
+    oc: "opencode",
+    amp: "amp",
+    pi: "pi",
+    hermes: "hermes",
+    devin: "devin",
+  };
+  return aliases[base] ?? aliases[raw] ?? raw;
+}
+
+export const harnessName = (harness = "claude") => NAMES[harnessKey(harness)] || harness;
+
+export const harnessTint = (harness = "claude"): string | undefined => TINTS[harnessKey(harness)];
+
+const BRAND_PATHS: Record<string, string> = {
+  claude:
+    "m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z",
+  gemini:
+    "M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81",
+  cursor:
+    "M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23",
+  opencode: "M22 24H2V0h20zM17 4.8H7v14.4h10z",
+};
+
+const BRAND_MARKS: Record<string, { viewBox: string; paths: string[] }> = {
+  antigravity: {
+    viewBox: "0 0 180 180",
+    paths: [
+      "M144.248 149.062C151.748 154.688 162.998 150.938 152.685 140.625C121.748 110.625 128.31 28.125 89.8727 28.125C51.4352 28.125 57.9977 110.625 27.0602 140.625C15.8102 151.875 27.9977 154.688 35.4977 149.062C64.5602 129.375 62.6852 94.6875 89.8727 94.6875C117.06 94.6875 115.185 129.375 144.248 149.062Z",
+    ],
+  },
+  grok: {
+    viewBox: "0 0 34 33",
+    paths: [
+      "M13.2371 21.0407L24.3186 12.8506C24.8619 12.4491 25.6384 12.6057 25.8973 13.2294C27.2597 16.5185 26.651 20.4712 23.9403 23.1851C21.2297 25.8989 17.4581 26.4941 14.0108 25.1386L10.2449 26.8843C15.6463 30.5806 22.2053 29.6665 26.304 25.5601C29.5551 22.3051 30.562 17.8683 29.6205 13.8673L29.629 13.8758C28.2637 7.99809 29.9647 5.64871 33.449 0.844576C33.5314 0.730667 33.6139 0.616757 33.6964 0.5L29.1113 5.09055V5.07631L13.2343 21.0436",
+      "M10.9503 23.0313C7.07343 19.3235 7.74185 13.5853 11.0498 10.2763C13.4959 7.82722 17.5036 6.82767 21.0021 8.2971L24.7595 6.55998C24.0826 6.07017 23.215 5.54334 22.2195 5.17313C17.7198 3.31926 12.3326 4.24192 8.67479 7.90126C5.15635 11.4239 4.0499 16.8403 5.94992 21.4622C7.36924 24.9165 5.04257 27.3598 2.69884 29.826C1.86829 30.7002 1.0349 31.5745 0.36364 32.5L10.9474 23.0341",
+    ],
+  },
+};
+
+const CODEX_GLYPH = (
+  <path
+    fill="currentColor"
+    fillRule="evenodd"
+    clipRule="evenodd"
+    d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"
+  />
+);
+
+const EXTRA_GLYPHS: Record<string, ReactNode> = {
+  codex: CODEX_GLYPH,
+  kimi: (
+    <g fill="currentColor">
+      <path d="M4.5 3h3.4v7.4L14.7 3h4.5l-7.9 8.5L19.8 21h-4.6l-7.3-8.2V21H4.5Z" />
+      <circle cx="20.2" cy="3.8" r="1.8" />
+    </g>
+  ),
+  pi: (
+    <g fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6.5 8.5h11" />
+      <path d="M10 8.5 9 17M14.2 8.5 15.2 17" />
+    </g>
+  ),
+};
+
+function HarnessGlyph({ harness, size }: { harness: string; size: number }) {
+  const key = harnessKey(harness);
+  const brand = BRAND_MARKS[key];
+  const viewBox = brand?.viewBox ?? "0 0 24 24";
+  const path = BRAND_PATHS[key];
+  const extra = EXTRA_GLYPHS[key];
   return (
-    <span className="harness-coin" role="img" title={name} aria-label={name}
-      style={{ width: size, height: size, fontSize: size * 0.53 }}>
-      {monograms[harnessId(harness)] || name.slice(0, 1)}
+    <svg viewBox={viewBox} width={size} height={size} style={{ display: "block" }} aria-hidden="true">
+      {brand ? (
+        brand.paths.map((d, i) => <path key={i} d={d} fill="currentColor" />)
+      ) : path ? (
+        <path d={path} fill="currentColor" />
+      ) : extra ?? (
+        <text
+          x="12"
+          y="12"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize="13"
+          fontWeight="600"
+          fontFamily="var(--mono)"
+          fill="currentColor"
+        >
+          {(harnessName(harness)[0] ?? "?").toUpperCase()}
+        </text>
+      )}
+    </svg>
+  );
+}
+
+export function HarnessCoin({
+  size = 16,
+  harness = "claude",
+  className,
+}: {
+  size?: number;
+  harness?: string;
+  className?: string;
+}) {
+  const name = harnessName(harness);
+  const tint = harnessTint(harness);
+  const glyphSize = Math.max(9, Math.round(size * 0.56));
+  return (
+    <span
+      className={className ? `harness-coin ${className}` : "harness-coin"}
+      role="img"
+      title={name}
+      aria-label={name}
+      style={{
+        width: size,
+        height: size,
+        color: tint,
+        ["--coin-tint" as string]: tint,
+      }}
+    >
+      <HarnessGlyph harness={harness} size={glyphSize} />
     </span>
   );
 }
