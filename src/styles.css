@@ -427,12 +427,20 @@ button { font: inherit; color: inherit; }
 .agent-cursor .light { fill: none; stroke: color-mix(in oklab, var(--ink) 38%, transparent); stroke-width: .5; stroke-linejoin: round; }
 .agent-cursor .tag {
   position: absolute; left: 14px; top: 25px; display: inline-flex; align-items: center; gap: 6px; height: 22px;
-  padding: 0 8px 0 4px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--raised);
-  white-space: nowrap; font-size: 11px; color: var(--muted); box-shadow: 0 6px 14px -6px rgba(0,0,0,.6);
+  padding: 0 8px 0 4px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface);
+  white-space: nowrap; font-size: 11px; color: var(--muted); box-shadow: var(--shadow);
 }
 .agent-cursor.flip .tag { left: auto; right: 4px; }
 .agent-cursor .who { color: var(--ink); font-family: var(--mono); letter-spacing: .04em; }
-.agent-cursor .say { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.agent-cursor .say { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.agent-cursor .when { color: var(--dim); font-family: var(--mono); font-size: 10px; font-variant-numeric: tabular-nums; }
+.agent-cursor[data-state="open"] .drift,
+.agent-cursor[data-state="open"] .sway > path,
+.agent-cursor[data-state="recent"] .drift,
+.agent-cursor[data-state="recent"] .sway > path { animation: none; }
+.agent-cursor[data-state="open"] .tag { border-color: var(--accent-line); }
+.agent-cursor[data-state="recent"] { opacity: 0.78; z-index: 1; }
+.agent-cursor[data-state="recent"] .fill { fill: var(--surface); }
 @media (prefers-reduced-motion: reduce) {
   .agent-cursor { transition: none; }
   .agent-cursor .drift, .agent-cursor .sway > path { animation: none; }
