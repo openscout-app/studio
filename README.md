@@ -15,7 +15,15 @@ Each repository is a frame, each session is an area, and the screens a session t
 npx github:openscout-app/studio
 ```
 
-That's all. It fetches Scout Studio from this repository, builds it, and opens http://localhost:4801. Add `--no-open` to skip the browser, or `--port <n>` for another port. If Scout Studio is already running, the command opens it. If something else holds the port, it takes the next free one.
+That's all. It fetches Scout Studio from this repository, builds it, and opens http://localhost:4801. Add `--no-open` to skip the browser, or `--port <n>` for another port. If the same build is already running, the command opens it; if an older build is running, Studio replaces it automatically. If another app holds the port, Studio takes the next free one.
+
+Manage the local server at any time:
+
+```sh
+npx github:openscout-app/studio status    # port, build, uptime, runtime and 3-day counts
+npx github:openscout-app/studio restart   # stop and start fresh
+npx github:openscout-app/studio stop      # stop the local server
+```
 
 On launch Studio checks for Codex, Antigravity CLI (`agy`), Claude Code, Cursor, Grok, Hermes and OpenCode. It registers its tools with each installed CLI that needs them. Start a new agent session to pick up the tools. Use `--no-setup` to open only the canvas. The optional `setup --print` command previews the registrations.
 

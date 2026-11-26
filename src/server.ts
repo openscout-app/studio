@@ -70,7 +70,8 @@ const handleThinRoutes = createScoutThinHttpHandler({
 });
 
 export function createStudioServer() {
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
+    (req as http.IncomingMessage & { studioServer?: http.Server }).studioServer = server;
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
 
@@ -101,6 +102,7 @@ export function createStudioServer() {
     });
     fs.createReadStream(file).pipe(res);
   });
+  return server;
 }
 
 export function serve(port: number, host = "127.0.0.1"): Promise<http.Server> {

@@ -4,7 +4,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
-import { IMG } from "./paths.mjs";
+import { CLAUDE_PROJECTS, HOME, IMG } from "./paths.mjs";
+import { CODEX_SESSIONS } from "./codex.mjs";
+import { buildInfo } from "./local.mjs";
 import { materialize } from "./transcripts.mjs";
 import { canvas } from "./sessions.mjs";
 import { addNote, feedback, handOff, keep, notes, remove, retry, startSweep } from "./notes.mjs";
@@ -67,6 +69,7 @@ function thumb(src, hash, size = "t") {
 }
 
 const TYPES = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
+const STARTED_AT = Date.now();
 
 /** Handles /api/* and /img/*; returns false for anything else. */
 export async function handle(req, res) {
@@ -86,6 +89,36 @@ export async function handle(req, res) {
     return true;
   }
   try {
+    if (p === "/api/status" && req.method === "GET") {
+      const { version, buildId } = buildInfo();
+      return send(res, 200, {
+        ok: true,
+        product: "scout-studio",
+        version,
+        buildId,
+        pid: process.pid,
+        startedAt: STARTED_AT,
+        uptimeMs: Date.now() - STARTED_AT,
+        home: HOME,
+        claudeProjects: CLAUDE_PROJECTS,
+        codexSessions: CODEX_SESSIONS,
+      }), true;
+    }
+    if (p === "/api/stop" && req.method === "POST") {
+      if (req.headers.origin || req.headers["x-scout-studio"] !== "cli") {
+        return send(res, 403, { error: "cli only" }), true;
+      }
+      const srv = req.studioServer || req.socket?.server;
+      res.once("finish", () => {
+        if (srv) {
+          srv.close();
+          setImmediate(() => srv.closeAllConnections?.());
+        }
+      });
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", connection: "close" });
+      res.end(JSON.stringify({ ok: true, pid: process.pid }));
+      return true;
+    }
     if (p === "/api/events" && req.method === "GET") {
       const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 4));
       return await events(req, res, hours), true;
