@@ -22,8 +22,10 @@ const BOILERPLATE_MD = /^(readme|agents|claude|gemini|skill|changelog|contributi
 const DOC_NAME_HINT = /(?:plan|review|design|spec|brief|audit|roadmap|proposal|one[-_]?pager|dossier|study|notes|architecture|walkthrough|report)/i;
 const DOC_DIR_HINT = /(?:^|\/)(?:plans|reviews|research|docs|artifacts|design|studies|notes|specs)(?:\/|$)/i;
 const BUILD_DIR_RE = /(?:^|\/)(?:node_modules|\.git|dist|build|\.next|out|coverage|vendor|\.turbo|\.vercel|\.cache)(?:\/|$)/;
-const SECRET_SEG_RE = /(?:^|\/)(?:\.ssh|\.aws|\.gnupg|\.kube|\.config\/gcloud)(?:\/|$)/i;
-const SECRET_FILE_RE = /^(?:\.env(?:\..+)?|\.npmrc|\.netrc|\.pypirc|id_rsa(?:\..+)?|id_ed25519(?:\..+)?|credentials(?:\..+)?|.*\.(?:pem|key|p12|pfx))$/i;
+const FORBIDDEN_REL_SEGMENT_RE = /^(\.env[^/]*|\.git|\.ssh|\.gnupg|\.aws|\.azure|\.kube|\.config|\.codex|\.claude|\.gemini|\.kimi-code|\.openscout|\.scout|keys?|keychains?|\.credentials|\.secrets|\.docker|credentials?|secrets?|sessions|transcripts|\.local|\.opencode|\.pi|\.grok|node_modules)$/i;
+const FORBIDDEN_NAME_TOKEN_RE = /(?:^|[._-])(?:credentials?|secrets?|tokens?)(?:[._-]|$)/i;
+const FORBIDDEN_EXT_RE = /\.(?:pem|key|p12|pfx|keystore)$/i;
+const FORBIDDEN_EXACT_FILE_RE = /^(?:\.env(?:\..+)?|id_rsa(?:\..+)?|id_ed25519(?:\..+)?|id_dsa(?:\..+)?|id_ecdsa(?:\..+)?|authorized_keys|known_hosts|\.npmrc|\.netrc|\.pypirc)$/i;
 const SHELL_CAPTURE_RE = /\b(?:scout\s+browser\s+screenshot|agent-browser\s+screenshot|playwright\s+screenshot|screencapture|action\s+(?:.*\s+)?capture)\b/i;
 const SCREENSHOT_TOOL_RE = /(?:screenshot|screencapture|capture_screen|save_screen)/i;
 
@@ -44,10 +46,83 @@ function safeRealpath(p) {
   try { return fs.realpathSync(p); } catch { return null; }
 }
 
-function isSecretPath(p) {
-  const normalized = String(p || "").split(path.sep).join("/");
-  if (SECRET_SEG_RE.test(normalized)) return true;
-  return SECRET_FILE_RE.test(path.basename(normalized));
+function isForbiddenFilename(filePath) {
+  const base = path.basename(String(filePath || ""));
+  if (!base) return true;
+  return (
+    FORBIDDEN_EXACT_FILE_RE.test(base) ||
+    FORBIDDEN_EXT_RE.test(base) ||
+    FORBIDDEN_NAME_TOKEN_RE.test(base)
+  );
+}
+
+/** True when any relative path segment or the filename matches `assertShowPath` secret rules. */
+function isSecretRelativePath(relPath) {
+  const normalized = String(relPath || "").split(path.sep).filter(Boolean);
+  if (!normalized.length) return true;
+  if (normalized.some((seg) => seg === ".." || FORBIDDEN_REL_SEGMENT_RE.test(seg))) return true;
+  return isForbiddenFilename(normalized[normalized.length - 1]);
+}
+
+/**
+ * Verify that `candidateResolved` sits inside one of `allowedRoots`, has zero symlinked directory
+ * or leaf segments beneath that root (`lstatSync`), and passes `assertShowPath`-aligned secret
+ * segment/filename checks on both lexical and resolved relative paths.
+ */
+function verifyContainedNonSymlink(candidateResolved, allowedRoots) {
+  if (!candidateResolved || isForbiddenFilename(candidateResolved)) return null;
+  const rootSet = new Set(allowedRoots);
+
+  // Walk upward to find the ancestor directory that corresponds to an `allowedRoot`
+  let anc = path.dirname(candidateResolved);
+  const relSegments = [path.basename(candidateResolved)];
+  let matchedRoot = null;
+  while (true) {
+    const ancReal = safeRealpath(anc);
+    if (ancReal && rootSet.has(ancReal)) {
+      try {
+        if (fs.lstatSync(anc).isSymbolicLink()) return null;
+      } catch {
+        return null;
+      }
+      matchedRoot = ancReal;
+      break;
+    }
+    const parent = path.dirname(anc);
+    if (parent === anc) break;
+    relSegments.unshift(path.basename(anc));
+    anc = parent;
+  }
+  if (!matchedRoot) return null;
+
+  const lexicalRel = relSegments.join(path.sep);
+  if (isSecretRelativePath(lexicalRel)) return null;
+
+  // Reject any intermediate symlinked directory segment or symlinked leaf inside `matchedRoot`
+  let cursor = matchedRoot;
+  for (let i = 0; i < relSegments.length; i++) {
+    const seg = relSegments[i];
+    if (!seg || seg === "." || seg === "..") return null;
+    cursor = path.join(cursor, seg);
+    let lst;
+    try {
+      lst = fs.lstatSync(cursor);
+    } catch {
+      return null;
+    }
+    if (lst.isSymbolicLink()) return null;
+    if (i < relSegments.length - 1 && !lst.isDirectory()) return null;
+  }
+
+  const real = safeRealpath(cursor);
+  if (!real || BUILD_DIR_RE.test(real) || !(real === matchedRoot || real.startsWith(matchedRoot + path.sep))) {
+    return null;
+  }
+  const resolvedRel = path.relative(matchedRoot, real);
+  if (!resolvedRel || resolvedRel.startsWith("..") || path.isAbsolute(resolvedRel) || isSecretRelativePath(resolvedRel)) {
+    return null;
+  }
+  return { real, allowedRoot: matchedRoot };
 }
 
 function readSafeFile(realPath, maxBytes) {
@@ -112,7 +187,7 @@ export function allowedRootsFor(cwd, extraRoots = []) {
 
 /** Resolves `candidate` (relative to `cwd` if needed) only if non-symlink, non-secret, and realpath-contained. */
 export function resolveContainedFile(candidate, cwd, allowedRoots) {
-  if (!candidate || typeof candidate !== "string") return null;
+  if (!candidate || typeof candidate !== "string" || !allowedRoots?.length) return null;
   let cleaned = candidate.trim().replace(/^['"`]|['"`]$/g, "");
   if (!cleaned) return null;
   if (cleaned.startsWith("file://")) {
@@ -120,19 +195,10 @@ export function resolveContainedFile(candidate, cwd, allowedRoots) {
   } else if (cleaned.startsWith("~/")) {
     cleaned = path.join(os.homedir(), cleaned.slice(2));
   }
-  const resolved = path.isAbsolute(cleaned) ? cleaned : cwd ? path.resolve(cwd, cleaned) : null;
-  if (!resolved || isSecretPath(resolved)) return null;
-  try {
-    if (fs.lstatSync(resolved).isSymbolicLink()) return null;
-  } catch {
-    return null;
-  }
-  const real = safeRealpath(resolved);
-  if (!real || BUILD_DIR_RE.test(real) || isSecretPath(real)) return null;
-  for (const root of allowedRoots) {
-    if (real === root || real.startsWith(root + path.sep)) return real;
-  }
-  return null;
+  const baseCwd = cwd ? (safeRealpath(cwd) || cwd) : null;
+  const resolved = path.isAbsolute(cleaned) ? path.resolve(cleaned) : baseCwd ? path.resolve(baseCwd, cleaned) : null;
+  if (!resolved) return null;
+  return verifyContainedNonSymlink(resolved, allowedRoots)?.real || null;
 }
 
 const ingestedImages = new Map(); // `${realPath}:${mtimeMs}:${size}` -> screen record | null
@@ -310,15 +376,10 @@ export function localShowById(id) {
 
 export function localShowBytes(id) {
   const entry = localShows.get(id);
-  if (!entry || isSecretPath(entry.realPath)) return null;
-  try {
-    if (fs.lstatSync(entry.realPath).isSymbolicLink()) return null;
-  } catch {
-    return null;
-  }
-  const real = safeRealpath(entry.realPath);
-  if (!real || isSecretPath(real) || !(real === entry.allowedRoot || real.startsWith(entry.allowedRoot + path.sep))) return null;
-  return readSafeFile(real, MAX_DOC_BYTES)?.bytes || null;
+  if (!entry) return null;
+  const verified = verifyContainedNonSymlink(entry.realPath, [entry.allowedRoot]);
+  if (!verified) return null;
+  return readSafeFile(verified.real, MAX_DOC_BYTES)?.bytes || null;
 }
 
 // ---- Tool-call extraction (screenshots written by CLI/tools + HTML/Markdown written by tools)
@@ -377,7 +438,6 @@ const WORKSPACE_DIRS = [
   "artifacts",
   "scratch",
   "docs/studies",
-  ".openscout/artifacts",
 ];
 
 const wsCache = new Map(); // root -> { at, sinceBucket, shows, screens }

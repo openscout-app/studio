@@ -38,7 +38,7 @@ try {
   loopbackTcpAllowed = false;
 }
 
-function invokeHandler(fn, method, rawUrl, headers = {}, bodyText = "") {
+function invokeHandler(fn, method, rawUrl, headers = {}, bodyText = "", extraReqProps = {}) {
   return new Promise((resolve) => {
     const req = new EventEmitter();
     const u = new URL(rawUrl);
@@ -46,6 +46,7 @@ function invokeHandler(fn, method, rawUrl, headers = {}, bodyText = "") {
     req.url = `${u.pathname}${u.search}`;
     req.headers = { host: u.host, ...Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])) };
     req.destroy = () => {};
+    Object.assign(req, extraReqProps);
 
     const res = new EventEmitter();
     let status = 200;
@@ -168,6 +169,48 @@ if (!loopbackTcpAllowed) {
 
 async function studioFetch(urlPath, init = {}) {
   return globalThis.fetch(`${studioBase}${urlPath}`, init);
+}
+
+/**
+ * Send raw wire headers (including forbidden Fetch headers like `Host`) via `http.request`
+ * when real loopback TCP is active, or via `invokeHandler` in socket-restricted sandboxes.
+ */
+function studioRawRequest(urlPath, { method = "GET", headers = {}, body = "", remoteAddress } = {}) {
+  if (loopbackTcpAllowed && !remoteAddress) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: "127.0.0.1",
+          port: studioServer.address().port,
+          path: urlPath,
+          method,
+          headers: { host: `localhost:${studioServer.address().port}`, ...headers },
+        },
+        (res) => {
+          const chunks = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => {
+            const buf = Buffer.concat(chunks);
+            resolve({
+              status: res.statusCode,
+              text: async () => buf.toString("utf8"),
+            });
+          });
+        },
+      );
+      req.on("error", reject);
+      if (body) req.write(body);
+      req.end();
+    });
+  }
+  return invokeHandler(
+    handle,
+    method,
+    `${studioBase}${urlPath}`,
+    headers,
+    body,
+    remoteAddress ? { socket: { remoteAddress } } : {},
+  );
 }
 
 async function studioJson(method, urlPath, body) {
@@ -724,21 +767,48 @@ test("falls back cleanly to per-root SSE + local multi-harness scanner when olde
   assert.equal(wsSession.shows[0].provenance, "workspace");
   assert.equal(wsSession.shows[0].caption, "Ambient Grid");
 
-  const crossOrigin = await studioFetch("/api/canvas", { headers: { origin: "https://evil.example" } });
+  const crossOrigin = await studioRawRequest("/api/canvas", { headers: { origin: "https://evil.example" } });
   assert.equal(crossOrigin.status, 403);
 
-  const nonLocalHost = await studioFetch("/api/canvas", { headers: { host: "example.com" } });
+  const nonLocalHost = await studioRawRequest("/api/canvas", { headers: { host: "example.com" } });
   assert.equal(nonLocalHost.status, 403);
+
+  for (const [label, hdrs] of [
+    ["forwarded", { forwarded: "for=203.0.113.4;proto=https" }],
+    ["x-openscout-forwarded-node-id", { "x-openscout-forwarded-node-id": "remote-node" }],
+    ["non-loopback x-forwarded-for", { "x-forwarded-for": "203.0.113.4" }],
+    ["non-loopback x-real-ip", { "x-real-ip": "198.51.100.7" }],
+    ["remote x-openscout-transport", { "x-openscout-transport": "remote" }],
+    ["truthy x-openscout-peer", { "x-openscout-peer": "1" }],
+    ["truthy x-openscout-guest", { "x-openscout-guest": "true" }],
+    ["truthy x-openscout-scoped", { "x-openscout-scoped": "yes" }],
+  ]) {
+    const r = await studioRawRequest("/api/canvas", { headers: hdrs });
+    assert.equal(r.status, 403, `${label} must be rejected with 403`);
+  }
+
+  const loopbackXff = await studioRawRequest("/api/notes", { headers: { "x-forwarded-for": "127.0.0.1, ::1" } });
+  assert.equal(loopbackXff.status, 200, "purely loopback x-forwarded-for stays allowed");
+
+  const nonLoopbackPeer = await studioRawRequest("/api/canvas", { remoteAddress: "203.0.113.9" });
+  assert.equal(nonLoopbackPeer.status, 403, "non-loopback socket remoteAddress must be rejected");
+
+  const crossSiteMutation = await studioRawRequest("/api/notes", {
+    method: "POST",
+    headers: { "content-type": "application/json", "sec-fetch-site": "cross-site" },
+    body: JSON.stringify({ session: sessionId, screen: { hash: "0011223344556677" }, text: "csrf" }),
+  });
+  assert.equal(crossSiteMutation.status, 403, "sec-fetch-site: cross-site on POST must be rejected");
 });
 
-test("rejects symlinks, hardlinks (nlink > 1), secret paths, and outside-worktree files in fallback discovery", async () => {
+test("rejects symlinks, intermediate symlink dirs, hardlinks (nlink > 1), secret paths, and outside-worktree files", async () => {
   const { allowedRootsFor, ingestImageFile, localShowBytes, registerLocalShow } = await import("./artifacts.mjs");
   const repo = path.join(root, "containment-repo");
   initGitRepo(repo);
   const realRepo = fs.realpathSync(repo);
   const allowed = allowedRootsFor(realRepo);
 
-  // Outside file + symlink inside worktree
+  // Outside file + leaf symlink inside worktree
   const outsideHtml = path.join(root, "outside-secret.html");
   fs.writeFileSync(outsideHtml, "<!doctype html><html><head><title>Outside</title></head><body>no</body></html>");
   const symHtml = path.join(realRepo, "design", "sym.html");
@@ -746,6 +816,53 @@ test("rejects symlinks, hardlinks (nlink > 1), secret paths, and outside-worktre
   fs.symlinkSync(outsideHtml, symHtml);
   assert.equal(registerLocalShow(outsideHtml, realRepo, allowed), null);
   assert.equal(registerLocalShow(symHtml, realRepo, allowed), null);
+
+  // Intermediate symlinked directory segment inside allowedRoot (even pointing inside the same repo) must be rejected
+  const realSubDir = path.join(realRepo, "plans", "real-sub");
+  fs.mkdirSync(realSubDir, { recursive: true });
+  const innerSpec = path.join(realSubDir, "inner-spec.md");
+  fs.writeFileSync(innerSpec, "# Inner Spec\n");
+  const symSubDir = path.join(realRepo, "plans", "sym-sub");
+  fs.symlinkSync(realSubDir, symSubDir);
+  assert.equal(
+    registerLocalShow(path.join(symSubDir, "inner-spec.md"), realRepo, allowed),
+    null,
+    "intermediate symlinked directory inside allowedRoot must be rejected",
+  );
+  assert.ok(registerLocalShow(innerSpec, realRepo, allowed), "non-symlink path inside allowedRoot succeeds");
+
+  // assertShowPath-aligned secret filenames & extensions inside plans/
+  for (const relSecret of [
+    "plans/deploy-credentials.md",
+    "plans/api-token.md",
+    "plans/client_secret.html",
+    "plans/release.keystore",
+    "plans/.env.production",
+    "plans/.ssh/design.md",
+  ]) {
+    const full = path.join(realRepo, relSecret);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, "# Forbidden Secret Material\n");
+    assert.equal(registerLocalShow(full, realRepo, allowed), null, `${relSecret} must be rejected as secret path`);
+  }
+
+  // Antigravity `.gemini/.../brain/<id>` stays allowed when brainDir is an allowedRoot, while secret names inside it are still rejected
+  const fakeBrainDir = path.join(root, ".gemini", "antigravity-cli", "brain", "conv-123");
+  fs.mkdirSync(fakeBrainDir, { recursive: true });
+  const brainAllowed = allowedRootsFor(realRepo, [fakeBrainDir]);
+  const brainDoc = path.join(fakeBrainDir, "walkthrough.md");
+  fs.writeFileSync(brainDoc, "# Walkthrough\n");
+  assert.ok(
+    registerLocalShow(brainDoc, realRepo, brainAllowed, { fromBrain: true }),
+    "brainDir artifact must remain allowed when brainDir is in allowedRoots",
+  );
+  const brainSecret = path.join(fakeBrainDir, "oauth-tokens.md");
+  fs.writeFileSync(brainSecret, "# Tokens\n");
+  assert.equal(
+    registerLocalShow(brainSecret, realRepo, brainAllowed, { fromBrain: true }),
+    null,
+    "secret-named file inside brainDir must still be rejected",
+  );
 
   // Hardlinked document (nlink === 2) must be rejected both on registration and on byte read
   const origMd = path.join(realRepo, "plans", "hardlink-a.md");

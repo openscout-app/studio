@@ -23,13 +23,57 @@ import { localShowById, localShowBytes } from "./artifacts.mjs";
 import { viewResponse } from "./show-view.mjs";
 import { events } from "./live.mjs";
 
-const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const LOOPBACK_IP = /^(?:127\.\d+\.\d+\.\d+|::1|\[::1\]|::ffff:127\.\d+\.\d+\.\d+)$/i;
+
+function headerString(v) {
+  return Array.isArray(v) ? v.join(",") : typeof v === "string" ? v : "";
+}
+
+function truthyHeader(v) {
+  const s = headerString(v).trim().toLowerCase();
+  return Boolean(s && s !== "0" && s !== "false" && s !== "no");
+}
 
 function local(req) {
-  if (!LOCAL.test(req.headers.host || "")) return false;
-  const origin = req.headers.origin;
+  const h = req.headers || {};
+  if (!LOCAL.test(headerString(h.host))) return false;
+
+  const remoteAddr = req.socket?.remoteAddress;
+  if (remoteAddr && !LOOPBACK_IP.test(remoteAddr)) return false;
+
+  const tc = req.transportContext;
+  if (tc && ((tc.transport && tc.transport !== "local" && tc.transport !== "loopback") || tc.peer || tc.guest || tc.scoped)) {
+    return false;
+  }
+
+  if (headerString(h.forwarded).trim()) return false;
+  if (headerString(h["x-openscout-forwarded-node-id"]).trim()) return false;
+
+  const xff = headerString(h["x-forwarded-for"]).trim();
+  if (xff) {
+    const hops = xff.split(",").map((s) => s.trim());
+    if (!hops.length || hops.some((ip) => !ip || !LOOPBACK_IP.test(ip))) return false;
+  }
+
+  const realIp = headerString(h["x-real-ip"]).trim();
+  if (realIp && !LOOPBACK_IP.test(realIp)) return false;
+
+  const transport = headerString(h["x-openscout-transport"]).trim().toLowerCase();
+  if (transport && transport !== "local" && transport !== "loopback") return false;
+
+  if (truthyHeader(h["x-openscout-peer"]) || truthyHeader(h["x-openscout-guest"]) || truthyHeader(h["x-openscout-scoped"])) {
+    return false;
+  }
+
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    if (headerString(h["sec-fetch-site"]).trim().toLowerCase() === "cross-site") return false;
+  }
+
+  const origin = headerString(h.origin).trim();
   if (!origin) return true;
-  try { return new URL(origin).host === req.headers.host; } catch { return false; }
+  try { return new URL(origin).host.toLowerCase() === headerString(h.host).toLowerCase(); } catch { return false; }
 }
 
 const send = (res, code, body) => {

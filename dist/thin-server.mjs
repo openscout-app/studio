@@ -2752,8 +2752,10 @@ const BOILERPLATE_MD = /^(readme|agents|claude|gemini|skill|changelog|contributi
 const DOC_NAME_HINT = /(?:plan|review|design|spec|brief|audit|roadmap|proposal|one[-_]?pager|dossier|study|notes|architecture|walkthrough|report)/i;
 const DOC_DIR_HINT = /(?:^|\/)(?:plans|reviews|research|docs|artifacts|design|studies|notes|specs)(?:\/|$)/i;
 const BUILD_DIR_RE = /(?:^|\/)(?:node_modules|\.git|dist|build|\.next|out|coverage|vendor|\.turbo|\.vercel|\.cache)(?:\/|$)/;
-const SECRET_SEG_RE = /(?:^|\/)(?:\.ssh|\.aws|\.gnupg|\.kube|\.config\/gcloud)(?:\/|$)/i;
-const SECRET_FILE_RE = /^(?:\.env(?:\..+)?|\.npmrc|\.netrc|\.pypirc|id_rsa(?:\..+)?|id_ed25519(?:\..+)?|credentials(?:\..+)?|.*\.(?:pem|key|p12|pfx))$/i;
+const FORBIDDEN_REL_SEGMENT_RE = /^(\.env[^/]*|\.git|\.ssh|\.gnupg|\.aws|\.azure|\.kube|\.config|\.codex|\.claude|\.gemini|\.kimi-code|\.openscout|\.scout|keys?|keychains?|\.credentials|\.secrets|\.docker|credentials?|secrets?|sessions|transcripts|\.local|\.opencode|\.pi|\.grok|node_modules)$/i;
+const FORBIDDEN_NAME_TOKEN_RE = /(?:^|[._-])(?:credentials?|secrets?|tokens?)(?:[._-]|$)/i;
+const FORBIDDEN_EXT_RE = /\.(?:pem|key|p12|pfx|keystore)$/i;
+const FORBIDDEN_EXACT_FILE_RE = /^(?:\.env(?:\..+)?|id_rsa(?:\..+)?|id_ed25519(?:\..+)?|id_dsa(?:\..+)?|id_ecdsa(?:\..+)?|authorized_keys|known_hosts|\.npmrc|\.netrc|\.pypirc)$/i;
 const SHELL_CAPTURE_RE = /\b(?:scout\s+browser\s+screenshot|agent-browser\s+screenshot|playwright\s+screenshot|screencapture|action\s+(?:.*\s+)?capture)\b/i;
 const SCREENSHOT_TOOL_RE = /(?:screenshot|screencapture|capture_screen|save_screen)/i;
 const FORBIDDEN_EXACT = /* @__PURE__ */ new Set([
@@ -2775,10 +2777,65 @@ function safeRealpath(p) {
     return null;
   }
 }
-function isSecretPath(p) {
-  const normalized = String(p || "").split(path.sep).join("/");
-  if (SECRET_SEG_RE.test(normalized)) return true;
-  return SECRET_FILE_RE.test(path.basename(normalized));
+function isForbiddenFilename(filePath) {
+  const base = path.basename(String(filePath || ""));
+  if (!base) return true;
+  return FORBIDDEN_EXACT_FILE_RE.test(base) || FORBIDDEN_EXT_RE.test(base) || FORBIDDEN_NAME_TOKEN_RE.test(base);
+}
+function isSecretRelativePath(relPath) {
+  const normalized = String(relPath || "").split(path.sep).filter(Boolean);
+  if (!normalized.length) return true;
+  if (normalized.some((seg) => seg === ".." || FORBIDDEN_REL_SEGMENT_RE.test(seg))) return true;
+  return isForbiddenFilename(normalized[normalized.length - 1]);
+}
+function verifyContainedNonSymlink(candidateResolved, allowedRoots) {
+  if (!candidateResolved || isForbiddenFilename(candidateResolved)) return null;
+  const rootSet = new Set(allowedRoots);
+  let anc = path.dirname(candidateResolved);
+  const relSegments = [path.basename(candidateResolved)];
+  let matchedRoot = null;
+  while (true) {
+    const ancReal = safeRealpath(anc);
+    if (ancReal && rootSet.has(ancReal)) {
+      try {
+        if (fs.lstatSync(anc).isSymbolicLink()) return null;
+      } catch {
+        return null;
+      }
+      matchedRoot = ancReal;
+      break;
+    }
+    const parent = path.dirname(anc);
+    if (parent === anc) break;
+    relSegments.unshift(path.basename(anc));
+    anc = parent;
+  }
+  if (!matchedRoot) return null;
+  const lexicalRel = relSegments.join(path.sep);
+  if (isSecretRelativePath(lexicalRel)) return null;
+  let cursor = matchedRoot;
+  for (let i = 0; i < relSegments.length; i++) {
+    const seg = relSegments[i];
+    if (!seg || seg === "." || seg === "..") return null;
+    cursor = path.join(cursor, seg);
+    let lst;
+    try {
+      lst = fs.lstatSync(cursor);
+    } catch {
+      return null;
+    }
+    if (lst.isSymbolicLink()) return null;
+    if (i < relSegments.length - 1 && !lst.isDirectory()) return null;
+  }
+  const real = safeRealpath(cursor);
+  if (!real || BUILD_DIR_RE.test(real) || !(real === matchedRoot || real.startsWith(matchedRoot + path.sep))) {
+    return null;
+  }
+  const resolvedRel = path.relative(matchedRoot, real);
+  if (!resolvedRel || resolvedRel.startsWith("..") || path.isAbsolute(resolvedRel) || isSecretRelativePath(resolvedRel)) {
+    return null;
+  }
+  return { real, allowedRoot: matchedRoot };
 }
 function readSafeFile(realPath, maxBytes) {
   let fd;
@@ -2839,7 +2896,7 @@ function allowedRootsFor(cwd, extraRoots = []) {
   return [...roots];
 }
 function resolveContainedFile(candidate, cwd, allowedRoots) {
-  if (!candidate || typeof candidate !== "string") return null;
+  if (!candidate || typeof candidate !== "string" || !allowedRoots?.length) return null;
   let cleaned = candidate.trim().replace(/^['"`]|['"`]$/g, "");
   if (!cleaned) return null;
   if (cleaned.startsWith("file://")) {
@@ -2851,19 +2908,10 @@ function resolveContainedFile(candidate, cwd, allowedRoots) {
   } else if (cleaned.startsWith("~/")) {
     cleaned = path.join(os.homedir(), cleaned.slice(2));
   }
-  const resolved = path.isAbsolute(cleaned) ? cleaned : cwd ? path.resolve(cwd, cleaned) : null;
-  if (!resolved || isSecretPath(resolved)) return null;
-  try {
-    if (fs.lstatSync(resolved).isSymbolicLink()) return null;
-  } catch {
-    return null;
-  }
-  const real = safeRealpath(resolved);
-  if (!real || BUILD_DIR_RE.test(real) || isSecretPath(real)) return null;
-  for (const root2 of allowedRoots) {
-    if (real === root2 || real.startsWith(root2 + path.sep)) return real;
-  }
-  return null;
+  const baseCwd = cwd ? safeRealpath(cwd) || cwd : null;
+  const resolved = path.isAbsolute(cleaned) ? path.resolve(cleaned) : baseCwd ? path.resolve(baseCwd, cleaned) : null;
+  if (!resolved) return null;
+  return verifyContainedNonSymlink(resolved, allowedRoots)?.real || null;
 }
 const ingestedImages = /* @__PURE__ */ new Map();
 function ingestImageFile(filePath, cwd, allowedRoots, meta = {}) {
@@ -3026,15 +3074,10 @@ function localShowById(id) {
 }
 function localShowBytes(id) {
   const entry = localShows.get(id);
-  if (!entry || isSecretPath(entry.realPath)) return null;
-  try {
-    if (fs.lstatSync(entry.realPath).isSymbolicLink()) return null;
-  } catch {
-    return null;
-  }
-  const real = safeRealpath(entry.realPath);
-  if (!real || isSecretPath(real) || !(real === entry.allowedRoot || real.startsWith(entry.allowedRoot + path.sep))) return null;
-  return readSafeFile(real, MAX_DOC_BYTES)?.bytes || null;
+  if (!entry) return null;
+  const verified = verifyContainedNonSymlink(entry.realPath, [entry.allowedRoot]);
+  if (!verified) return null;
+  return readSafeFile(verified.real, MAX_DOC_BYTES)?.bytes || null;
 }
 function extractImageTokens(text) {
   if (!text || typeof text !== "string") return [];
@@ -3080,8 +3123,7 @@ const WORKSPACE_DIRS = [
   "reviews",
   "artifacts",
   "scratch",
-  "docs/studies",
-  ".openscout/artifacts"
+  "docs/studies"
 ];
 const wsCache = /* @__PURE__ */ new Map();
 function walkShallow(dir, maxDepth, out = [], depth = 0) {
@@ -5094,13 +5136,46 @@ function stop() {
   ticker = null;
   sent.clear();
 }
-const LOCAL$1 = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+const LOCAL$1 = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const LOOPBACK_IP$1 = /^(?:127\.\d+\.\d+\.\d+|::1|\[::1\]|::ffff:127\.\d+\.\d+\.\d+)$/i;
+function headerString(v2) {
+  return Array.isArray(v2) ? v2.join(",") : typeof v2 === "string" ? v2 : "";
+}
+function truthyHeader(v2) {
+  const s = headerString(v2).trim().toLowerCase();
+  return Boolean(s && s !== "0" && s !== "false" && s !== "no");
+}
 function local(req) {
-  if (!LOCAL$1.test(req.headers.host || "")) return false;
-  const origin = req.headers.origin;
+  const h = req.headers || {};
+  if (!LOCAL$1.test(headerString(h.host))) return false;
+  const remoteAddr = req.socket?.remoteAddress;
+  if (remoteAddr && !LOOPBACK_IP$1.test(remoteAddr)) return false;
+  const tc = req.transportContext;
+  if (tc && (tc.transport && tc.transport !== "local" && tc.transport !== "loopback" || tc.peer || tc.guest || tc.scoped)) {
+    return false;
+  }
+  if (headerString(h.forwarded).trim()) return false;
+  if (headerString(h["x-openscout-forwarded-node-id"]).trim()) return false;
+  const xff = headerString(h["x-forwarded-for"]).trim();
+  if (xff) {
+    const hops = xff.split(",").map((s) => s.trim());
+    if (!hops.length || hops.some((ip) => !ip || !LOOPBACK_IP$1.test(ip))) return false;
+  }
+  const realIp = headerString(h["x-real-ip"]).trim();
+  if (realIp && !LOOPBACK_IP$1.test(realIp)) return false;
+  const transport = headerString(h["x-openscout-transport"]).trim().toLowerCase();
+  if (transport && transport !== "local" && transport !== "loopback") return false;
+  if (truthyHeader(h["x-openscout-peer"]) || truthyHeader(h["x-openscout-guest"]) || truthyHeader(h["x-openscout-scoped"])) {
+    return false;
+  }
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    if (headerString(h["sec-fetch-site"]).trim().toLowerCase() === "cross-site") return false;
+  }
+  const origin = headerString(h.origin).trim();
   if (!origin) return true;
   try {
-    return new URL(origin).host === req.headers.host;
+    return new URL(origin).host.toLowerCase() === headerString(h.host).toLowerCase();
   } catch {
     return false;
   }
@@ -5270,14 +5345,40 @@ async function handle(req, res) {
   return true;
 }
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
-const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const LOOPBACK_IP = /^(?:127\.\d+\.\d+\.\d+|::1|\[::1\]|::ffff:127\.\d+\.\d+\.\d+)$/i;
+function headerStr(v2) {
+  return Array.isArray(v2) ? v2.join(",") : typeof v2 === "string" ? v2 : "";
+}
+function truthyHdr(v2) {
+  const s = headerStr(v2).trim().toLowerCase();
+  return Boolean(s && s !== "0" && s !== "false" && s !== "no");
+}
 function isLocalRequest(req) {
-  const host = req.headers.host || "";
+  const h = req.headers;
+  const host = headerStr(h.host);
   if (!LOCAL.test(host)) return false;
-  const origin = req.headers.origin;
+  const remoteAddr = req.socket?.remoteAddress;
+  if (remoteAddr && !LOOPBACK_IP.test(remoteAddr)) return false;
+  if (headerStr(h.forwarded).trim() || headerStr(h["x-openscout-forwarded-node-id"]).trim()) return false;
+  const xff = headerStr(h["x-forwarded-for"]).trim();
+  if (xff) {
+    const hops = xff.split(",").map((s) => s.trim());
+    if (!hops.length || hops.some((ip) => !ip || !LOOPBACK_IP.test(ip))) return false;
+  }
+  const realIp = headerStr(h["x-real-ip"]).trim();
+  if (realIp && !LOOPBACK_IP.test(realIp)) return false;
+  const transport = headerStr(h["x-openscout-transport"]).trim().toLowerCase();
+  if (transport && transport !== "local" && transport !== "loopback") return false;
+  if (truthyHdr(h["x-openscout-peer"]) || truthyHdr(h["x-openscout-guest"]) || truthyHdr(h["x-openscout-scoped"])) return false;
+  const method = (req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD" && headerStr(h["sec-fetch-site"]).trim().toLowerCase() === "cross-site") {
+    return false;
+  }
+  const origin = headerStr(h.origin).trim();
   if (!origin) return true;
   try {
-    return new URL(origin).host === host;
+    return new URL(origin).host.toLowerCase() === host.toLowerCase();
   } catch {
     return false;
   }
