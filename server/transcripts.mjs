@@ -149,8 +149,11 @@ function closeTurn(s) {
   }
   for (const sc of kept) {
     sc.caption = prose(s.said).slice(0, 600);
+    sc.provenance ||= "captured";
     const prev = sc.subject && s.lastOf.get(sc.subject);
     if (prev && prev.hash === sc.hash) continue; // the same screen again: it's on the canvas already
+    sc.revision = prev ? (prev.revision || 1) + 1 : 1;
+    if (prev) sc.supersedes = prev.hash;
     if (prev && sameShape(sc, prev)) sc.before = { hash: prev.hash, ext: prev.ext, at: prev.at };
     if (sc.subject) s.lastOf.set(sc.subject, sc);
     s.screens.push(sc);
@@ -322,6 +325,16 @@ export const stateOf = (file) => states.get(file) || null;
 
 /** A turn still open has screens that aren't settled yet; show them anyway, as they stand. */
 export function screensOf(s) {
-  const open = s.turnScreens.map((sc) => ({ ...sc, caption: prose(s.said).slice(0, 600), open: true }));
+  const open = s.turnScreens.map((sc) => {
+    const prev = sc.subject && s.lastOf.get(sc.subject);
+    return {
+      ...sc,
+      provenance: sc.provenance || "captured",
+      revision: prev && prev.hash !== sc.hash ? (prev.revision || 1) + 1 : (prev?.revision || 1),
+      ...(prev && prev.hash !== sc.hash ? { supersedes: prev.hash } : {}),
+      caption: prose(s.said).slice(0, 600),
+      open: true,
+    };
+  });
   return [...s.screens, ...open];
 }

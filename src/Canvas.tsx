@@ -1,7 +1,7 @@
 // The canvas: repositories as frames, sessions as areas, screens as cards. Drag or scroll to move,
 // pinch or hold ⌘ and scroll to zoom. Only the cards in view are drawn.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ago, count, thumb, type Note, type Screen, showView, type Show } from "./api";
+import { ago, count, provenanceLabel, provenanceOfShow, revisionOf, thumb, type Note, type Screen, showView, type Show } from "./api";
 import { docTitle } from "./folio";
 import { CARD_W, MEDIA_H, type Area, type Box, type Frame, type ShowCard } from "./scene";
 import { savePlace } from "./place";
@@ -421,7 +421,13 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, onFan
         <div className="meta">
           <span>{s.working ? "working" : s.open ? "open" : "closed"} · {ago(s.lastAt)}</span>
           {s.branch && <span className="mono">{s.branch}</span>}
-          {s.shows?.length > 0 && <span>{s.shows.length} shown</span>}
+          {s.shows?.length > 0 && (
+            <span>
+              {s.shows.every((sh) => provenanceOfShow(sh) === "shown")
+                ? `${s.shows.length} shown`
+                : count(s.shows.length, "surface")}
+            </span>
+          )}
           {s.screens.length > 0 && <span>{count(s.screens.length, "screen")}</span>}
           {(area.hidden > 0 || opened) && (
             <button className="s-ds-btn s-ds-btn--tertiary more" onPointerDown={(e) => e.stopPropagation()} onClick={() => onMore(s.id)}>
@@ -497,6 +503,8 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, onFan
           );
         }
         const { show, box } = item;
+        const prov = provenanceOfShow(show);
+        const rev = revisionOf(show);
         return (
           <button key={show.id} className={`card shown${fresh(show.id) ? " arriving" : ""}`} style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
             onClick={() => { if (!moved.current) onShow(show, show.view === "markdown" && sessionMarkdowns.length > 1 ? sessionMarkdowns : undefined); }}>
@@ -508,9 +516,9 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, onFan
               <div className="cap">{show.caption || show.name}</div>
               <div className="sub">
                 <span>{ago(show.at)}</span>
-                <span className="tag accent">shown</span>
+                <span className={prov === "shown" ? "tag accent" : "tag"}>{provenanceLabel(prov).toLowerCase()}</span>
                 <span>{show.view === "file" ? show.mediaType : show.view}</span>
-                {show.versions > 1 && <span>{show.versions} versions</span>}
+                {rev > 1 && <span className="tag">v{rev}</span>}
               </div>
             </div>
           </button>
@@ -518,6 +526,7 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, onFan
       })}
       {area.cards.filter((c) => inView(c.box)).map(({ screen: sc, box }) => {
         const pins = byScreen.get(sc.id) || [];
+        const rev = revisionOf(sc);
         return (
           <button
             key={sc.id} className={`card${fresh(sc.id) ? " arriving" : ""}`} style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
@@ -538,6 +547,7 @@ function AreaView({ area, inView, byScreen, moved, onOpen, onMore, onShow, onFan
               <div className="sub">
                 <span>{ago(sc.at)}</span>
                 <span>{kindOf(sc)}</span>
+                {rev > 1 && <span className="tag">v{rev}</span>}
                 {sc.before && <span className="tag accent">before / after</span>}
                 {pins.length > 0 && <span className="tag">{pins.length} {pins.length === 1 ? "note" : "notes"}</span>}
               </div>

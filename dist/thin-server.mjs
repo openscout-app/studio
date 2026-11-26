@@ -1052,6 +1052,474 @@ function imageSize(b2) {
   }
   return null;
 }
+function runtimeUrl() {
+  const env = process.env.SCOUT_RUNTIME_URL || process.env.OPENSCOUT_BROKER_URL;
+  if (env) return env.replace(/\/$/, "");
+  try {
+    const home = process.env.OPENSCOUT_HOME || path.join(os.homedir(), ".openscout");
+    const c = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+    const port = Number(c?.ports?.broker);
+    if (Number.isInteger(port) && port > 0) {
+      const host = !c.host || c.host === "0.0.0.0" || c.host === "::" ? "127.0.0.1" : c.host;
+      return `http://${host}:${port}`;
+    }
+  } catch {
+  }
+  return "http://127.0.0.1:43110";
+}
+const MD = /\.(md|markdown|mdx)$/i;
+const HTML = /\.html?$/i;
+function viewOf(show) {
+  const p = show.sourcePath || show.path || "";
+  if (show.kind === "image" || show.kind === "screen" || show.kind === "svg" || show.mediaType === "image/svg+xml") return "image";
+  if (show.kind === "video") return "video";
+  if (show.kind === "markdown" || MD.test(p) || show.mediaType === "text/markdown") return "markdown";
+  if (show.kind === "html" || HTML.test(p) || show.mediaType === "text/html") return "html";
+  if (show.kind === "pdf" || show.mediaType === "application/pdf") return "pdf";
+  if (/^text\/|json|xml|yaml|toml/.test(show.mediaType || "")) return "text";
+  return "file";
+}
+function extFromMedia(mediaType = "", sourcePath = "") {
+  if (mediaType === "image/jpeg") return "jpg";
+  if (mediaType === "image/webp") return "webp";
+  if (mediaType === "image/gif") return "gif";
+  if (mediaType === "image/png") return "png";
+  const ext = path.extname(sourcePath).toLowerCase();
+  if (ext === ".jpg" || ext === ".jpeg") return "jpg";
+  if (ext === ".webp") return "webp";
+  if (ext === ".gif") return "gif";
+  return "png";
+}
+function surfaceScreenHash(item) {
+  const hex = typeof item.sha256 === "string" && /^[0-9a-f]{16,}/i.test(item.sha256) ? item.sha256.toLowerCase() : crypto.createHash("sha256").update(String(item.id || item.sourcePath || "")).digest("hex");
+  return hex.slice(0, 16);
+}
+function deriveSurfaceSubject(input = {}) {
+  if (input.url) {
+    try {
+      const parsed = new URL(input.url);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        const normalizedPath = parsed.pathname.replace(/\/+$/, "") || "/";
+        const label = `${parsed.host}${normalizedPath}`;
+        return { key: `page:${label}`, kind: "page", label };
+      }
+    } catch {
+    }
+  }
+  if (input.windowId !== void 0 && input.windowId !== null && String(input.windowId).length > 0) {
+    return { key: `window:${input.windowId}`, kind: "window", label: `Window ${input.windowId}` };
+  }
+  const rawPath = input.sourcePath || "untitled";
+  const projectRoot = input.projectRoot || "";
+  const rel = path.isAbsolute(rawPath) && projectRoot && rawPath.startsWith(projectRoot + path.sep) ? path.relative(projectRoot, rawPath).split(path.sep).join("/") : path.basename(rawPath);
+  if (input.kind === "screen") {
+    const dir = path.posix.dirname(rel);
+    const ext = path.posix.extname(rel);
+    const rawStem = path.posix.basename(rel, ext);
+    const cleanStem = rawStem.replace(/([-_. ]?(?:before|after|old|new|v?\d+))+$/i, "") || rawStem;
+    const normalized = dir === "." ? cleanStem : `${dir}/${cleanStem}`;
+    return { key: `file:${normalized}`, kind: "file", label: normalized };
+  }
+  return { key: `file:${rel}`, kind: "file", label: rel };
+}
+let activeUrl = "";
+const listed = /* @__PURE__ */ new Map();
+const known = /* @__PURE__ */ new Map();
+const observedShows = /* @__PURE__ */ new Map();
+const surfaceScreens = /* @__PURE__ */ new Map();
+const observedCache = /* @__PURE__ */ new Map();
+const observedInflight = /* @__PURE__ */ new Map();
+let observedSupport = { state: "unknown", at: 0 };
+let globalShowsSupport = "unknown";
+let globalEventsSupport = "unknown";
+const wantedRoots = /* @__PURE__ */ new Set();
+let globalFollowing = false;
+let globalConnected = false;
+let globalAbort = null;
+const following = /* @__PURE__ */ new Map();
+const reconnectTimers = /* @__PURE__ */ new Set();
+const listeners$1 = /* @__PURE__ */ new Set();
+function syncRuntimeUrl() {
+  const cur = runtimeUrl();
+  if (cur !== activeUrl) {
+    stopWatchShows();
+    activeUrl = cur;
+    listed.clear();
+    known.clear();
+    observedShows.clear();
+    surfaceScreens.clear();
+    observedCache.clear();
+    observedInflight.clear();
+    wantedRoots.clear();
+    observedSupport = { state: "unknown", at: 0 };
+    globalShowsSupport = "unknown";
+    globalEventsSupport = "unknown";
+  }
+  return cur;
+}
+async function fetchRuntime(pathname, ms = 5e3) {
+  const base = syncRuntimeUrl();
+  return fetch(`${base}${pathname}`, { signal: AbortSignal.timeout(ms) });
+}
+async function getOk(pathname, ms = 5e3) {
+  const res = await fetchRuntime(pathname, ms);
+  if (!res.ok) {
+    const err = new Error(`${pathname}: ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res;
+}
+function indexObservedItems(items) {
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    if (item.kind === "screen" && item.provenance !== "shown") {
+      const hash = surfaceScreenHash(item);
+      const ext = extFromMedia(item.mediaType, item.sourcePath);
+      surfaceScreens.set(hash, {
+        id: item.id,
+        showId: item.showId || null,
+        ext,
+        mediaType: item.mediaType || `image/${ext === "jpg" ? "jpeg" : ext}`
+      });
+    }
+    const sourcePath = item.sourcePath || item.subject?.label || item.title || item.id;
+    const record = {
+      id: item.id,
+      showId: item.showId || null,
+      sourcePath,
+      path: sourcePath,
+      name: path.basename(sourcePath),
+      kind: item.kind,
+      view: viewOf({ ...item, sourcePath }),
+      mediaType: item.mediaType || "application/octet-stream",
+      createdAt: item.createdAt || Date.now(),
+      provenance: item.provenance || "shown",
+      local: item.provenance !== "shown"
+    };
+    observedShows.set(item.id, record);
+    if (item.showId) observedShows.set(item.showId, record);
+  }
+}
+async function observedSurfaces(windowMs = 4 * 36e5) {
+  syncRuntimeUrl();
+  const key2 = Math.max(6e4, Math.round(windowMs));
+  if (observedSupport.state === "unsupported" && Date.now() - observedSupport.at < 1e4) {
+    return { reachable: true, supported: false, inventory: null };
+  }
+  const hit = observedCache.get(key2);
+  if (hit && Date.now() - hit.at < 400) return hit.result;
+  if (observedInflight.has(key2)) return observedInflight.get(key2);
+  const task = (async () => {
+    let res;
+    try {
+      res = await fetchRuntime(`/v1/observed-surfaces?windowMs=${key2}`, 6e3);
+    } catch {
+      return { reachable: false, supported: false, inventory: null };
+    }
+    if (res.status === 404 || res.status === 400 || res.status === 501) {
+      observedSupport = { state: "unsupported", at: Date.now() };
+      return { reachable: true, supported: false, inventory: null };
+    }
+    if (!res.ok) {
+      return { reachable: true, supported: false, inventory: null };
+    }
+    let body2 = null;
+    try {
+      body2 = await res.json();
+    } catch {
+    }
+    if (body2?.schema !== "scout.observed-surfaces/v1" || !Array.isArray(body2.items)) {
+      observedSupport = { state: "unsupported", at: Date.now() };
+      return { reachable: true, supported: false, inventory: null };
+    }
+    observedSupport = { state: "supported", at: Date.now() };
+    indexObservedItems(body2.items);
+    const result = { reachable: true, supported: true, inventory: body2 };
+    observedCache.set(key2, { at: Date.now(), result });
+    return result;
+  })().finally(() => observedInflight.delete(key2));
+  observedInflight.set(key2, task);
+  return task;
+}
+const observedShowById = (id) => observedShows.get(id) || null;
+async function observedShowBytes(id) {
+  const rec = observedShows.get(id);
+  const surfaceId = rec?.id || id;
+  try {
+    const res = await getOk(`/v1/observed-surfaces/${encodeURIComponent(surfaceId)}/bytes`, 2e4);
+    return Buffer.from(await res.arrayBuffer());
+  } catch (err) {
+    if (rec?.showId) {
+      const res = await getOk(`/v1/shows/${encodeURIComponent(rec.showId)}/bytes`, 2e4);
+      return Buffer.from(await res.arrayBuffer());
+    }
+    throw err;
+  }
+}
+async function materializeRuntimeScreen(hash, ext) {
+  syncRuntimeUrl();
+  const out = path.join(IMG, `${hash}.${ext}`);
+  if (fs.existsSync(out)) return out;
+  const src = surfaceScreens.get(hash);
+  if (!src) return null;
+  let bytes = null;
+  try {
+    const res = await getOk(`/v1/observed-surfaces/${encodeURIComponent(src.id)}/bytes`, 2e4);
+    bytes = Buffer.from(await res.arrayBuffer());
+  } catch {
+    if (src.showId) {
+      try {
+        const res = await getOk(`/v1/shows/${encodeURIComponent(src.showId)}/bytes`, 2e4);
+        bytes = Buffer.from(await res.arrayBuffer());
+      } catch {
+      }
+    }
+  }
+  if (!bytes || !imageSize(bytes)) return null;
+  fs.mkdirSync(IMG, { recursive: true });
+  const tmp = `${out}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, bytes);
+    fs.renameSync(tmp, out);
+    return out;
+  } catch {
+    fs.rmSync(tmp, { force: true });
+    return null;
+  }
+}
+async function showsFor(roots) {
+  syncRuntimeUrl();
+  const out = [];
+  let usedGlobal = false;
+  if (globalShowsSupport !== "unsupported") {
+    const globalHit = listed.get("*");
+    if (globalHit && Date.now() - globalHit.at < (globalConnected ? 3e5 : 4e3)) {
+      out.push(...globalHit.shows);
+      usedGlobal = true;
+    } else {
+      try {
+        const res = await fetchRuntime("/v1/shows");
+        if (res.ok) {
+          const shows = (await res.json()).shows || [];
+          globalShowsSupport = "supported";
+          listed.set("*", { at: Date.now(), shows });
+          out.push(...shows);
+          usedGlobal = true;
+        } else if (res.status === 400 || res.status === 404) {
+          globalShowsSupport = "unsupported";
+        }
+      } catch {
+      }
+    }
+  }
+  if (!usedGlobal) {
+    await Promise.all([...new Set(roots.filter(Boolean))].map(async (root2) => {
+      const hit = listed.get(root2);
+      if (hit && Date.now() - hit.at < (following.has(root2) ? 3e5 : 4e3)) {
+        out.push(...hit.shows);
+        return;
+      }
+      let shows = [];
+      try {
+        shows = (await (await getOk(`/v1/shows?projectRoot=${encodeURIComponent(root2)}`)).json()).shows || [];
+      } catch {
+      }
+      listed.set(root2, { at: Date.now(), shows });
+      out.push(...shows);
+    }));
+  }
+  const all = [...new Map(out.map((s) => [s.id, s])).values()];
+  const byItem = /* @__PURE__ */ new Map();
+  for (const s of all) {
+    known.set(s.id, s);
+    const list = byItem.get(s.itemId);
+    if (list) list.push(s);
+    else byItem.set(s.itemId, [s]);
+  }
+  const latestList = [];
+  for (const group of byItem.values()) {
+    group.sort((a, b2) => a.createdAt - b2.createdAt || String(a.id).localeCompare(String(b2.id)));
+    const s = group[group.length - 1];
+    const prev = group.length > 1 ? group[group.length - 2] : null;
+    const view = viewOf(s);
+    const surfaceKind = view === "image" ? "screen" : view === "html" ? "html" : view === "markdown" ? "markdown" : view === "pdf" ? "pdf" : view === "video" ? "video" : "document";
+    latestList.push({
+      id: s.id,
+      itemId: s.itemId,
+      sessionId: s.sessionId || null,
+      agentId: s.agentId,
+      harness: s.harness || null,
+      projectRoot: s.projectRoot,
+      worktree: s.worktree,
+      branch: s.branch || "",
+      path: s.sourcePath,
+      name: path.basename(s.sourcePath),
+      view,
+      mediaType: s.mediaType,
+      size: s.byteSize,
+      caption: s.caption || "",
+      at: s.createdAt,
+      versions: group.length,
+      provenance: "shown",
+      revision: group.length,
+      ...prev ? { supersedes: prev.id } : {},
+      subject: deriveSurfaceSubject({ sourcePath: s.sourcePath, projectRoot: s.projectRoot, kind: surfaceKind })
+    });
+  }
+  return latestList.sort((a, b2) => b2.at - a.at);
+}
+const showById = (id) => known.get(id) || null;
+function onShows(fn) {
+  listeners$1.add(fn);
+  return () => listeners$1.delete(fn);
+}
+function stopWatchShows() {
+  globalFollowing = false;
+  globalConnected = false;
+  if (globalAbort) {
+    try {
+      globalAbort.abort();
+    } catch {
+    }
+    globalAbort = null;
+  }
+  for (const ac of following.values()) {
+    try {
+      ac.abort();
+    } catch {
+    }
+  }
+  following.clear();
+  for (const t of reconnectTimers) clearTimeout(t);
+  reconnectTimers.clear();
+}
+function scheduleReconnect(fn, delayMs) {
+  const t = setTimeout(() => {
+    reconnectTimers.delete(t);
+    fn();
+  }, delayMs);
+  t.unref?.();
+  reconnectTimers.add(t);
+}
+function watchShows(roots = []) {
+  syncRuntimeUrl();
+  for (const root2 of roots) if (root2) wantedRoots.add(root2);
+  if (globalEventsSupport === "unsupported") {
+    for (const root2 of wantedRoots) {
+      if (!following.has(root2)) followRoot(root2, 0);
+    }
+    return;
+  }
+  if (!globalFollowing) {
+    globalFollowing = true;
+    followGlobal(0);
+  }
+}
+async function followGlobal(failures) {
+  const urlAtStart = syncRuntimeUrl();
+  const ac = new AbortController();
+  globalAbort = ac;
+  let opened = false;
+  try {
+    const res = await fetch(`${urlAtStart}/v1/shows/events?since=${Date.now()}`, { signal: ac.signal });
+    if (urlAtStart !== activeUrl || ac.signal.aborted) return;
+    if (res.status === 400) {
+      globalEventsSupport = "unsupported";
+      globalFollowing = false;
+      globalConnected = false;
+      globalAbort = null;
+      for (const root2 of wantedRoots) {
+        if (!following.has(root2)) followRoot(root2, 0);
+      }
+      return;
+    }
+    if (!res.ok || !res.body) throw new Error(String(res.status));
+    globalEventsSupport = "supported";
+    globalConnected = true;
+    opened = true;
+    if (failures) {
+      listed.clear();
+      observedCache.clear();
+      for (const fn of listeners$1) fn("*");
+    }
+    const text = new TextDecoder();
+    let buf = "";
+    for await (const chunk of res.body) {
+      if (urlAtStart !== activeUrl || ac.signal.aborted) return;
+      buf += text.decode(chunk, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        if (/^event:\s*show\.created$/m.test(block)) {
+          let projectRoot = "*";
+          const dataLine = /^data:\s*(.+)$/m.exec(block)?.[1];
+          if (dataLine) {
+            try {
+              projectRoot = JSON.parse(dataLine)?.projectRoot || "*";
+            } catch {
+            }
+          }
+          listed.delete("*");
+          if (projectRoot !== "*") listed.delete(projectRoot);
+          else listed.clear();
+          observedCache.clear();
+          for (const fn of listeners$1) fn(projectRoot);
+        }
+      }
+    }
+  } catch {
+    if (urlAtStart !== activeUrl || ac.signal.aborted) return;
+  } finally {
+    if (globalAbort === ac) globalConnected = false;
+  }
+  if (!globalFollowing || urlAtStart !== activeUrl || ac.signal.aborted) return;
+  const n = opened ? 1 : failures + 1;
+  scheduleReconnect(() => followGlobal(n), Math.min(6e4, 2e3 * 2 ** Math.min(n, 5)));
+}
+async function followRoot(root2, failures) {
+  const urlAtStart = syncRuntimeUrl();
+  const ac = new AbortController();
+  following.set(root2, ac);
+  let opened = false;
+  try {
+    const res = await fetch(`${urlAtStart}/v1/shows/events?projectRoot=${encodeURIComponent(root2)}&since=${Date.now()}`, { signal: ac.signal });
+    if (urlAtStart !== activeUrl || ac.signal.aborted) return;
+    if (!res.ok || !res.body) throw new Error(String(res.status));
+    opened = true;
+    if (failures) {
+      listed.delete(root2);
+      observedCache.clear();
+      for (const fn of listeners$1) fn(root2);
+    }
+    const text = new TextDecoder();
+    let buf = "";
+    for await (const chunk of res.body) {
+      if (urlAtStart !== activeUrl || ac.signal.aborted) return;
+      buf += text.decode(chunk, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        if (/^event:\s*show\.created$/m.test(block)) {
+          listed.delete(root2);
+          observedCache.clear();
+          for (const fn of listeners$1) fn(root2);
+        }
+      }
+    }
+  } catch {
+    if (urlAtStart !== activeUrl || ac.signal.aborted) return;
+  }
+  if (!following.has(root2) || urlAtStart !== activeUrl || ac.signal.aborted) return;
+  const n = opened ? 1 : failures + 1;
+  scheduleReconnect(() => followRoot(root2, n), Math.min(6e4, 2e3 * 2 ** Math.min(n, 5)));
+}
+async function showBytes(id) {
+  const res = await getOk(`/v1/shows/${encodeURIComponent(id)}/bytes`, 2e4);
+  return Buffer.from(await res.arrayBuffer());
+}
 function M() {
   return { async: false, breaks: false, extensions: null, gfm: true, hooks: null, pedantic: false, renderer: null, silent: false, tokenizer: null, walkTokens: null };
 }
@@ -2234,11 +2702,12 @@ const DRAWN = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src d
 const SANDBOXED = "sandbox allow-scripts allow-popups; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'";
 const INLINE = /^(?:image\/(?:png|jpeg|gif|webp)|video\/(?:mp4|webm|quicktime))$/;
 function viewResponse(show, bytes) {
+  const isMutable = Boolean(show.local || show.provenance && show.provenance !== "shown");
   const base = {
-    "cache-control": show.local ? "no-store" : "private, max-age=31536000, immutable",
+    "cache-control": isMutable ? "no-store" : "private, max-age=31536000, immutable",
     "x-content-type-options": "nosniff"
   };
-  const where = show.sourcePath.replace(/^\/Users\/[^/]+/, "~");
+  const where = String(show.sourcePath || show.path || show.name || "").replace(/^\/Users\/[^/]+/, "~");
   const meta = (extra = []) => `<p class="meta">${[...extra, where, new Date(show.createdAt).toLocaleString()].map((x2) => `<span>${esc(x2)}</span>`).join("")}</p>`;
   const view = show.view;
   if ((view === "image" || view === "video") && INLINE.test(show.mediaType)) {
@@ -2275,6 +2744,7 @@ function viewResponse(show, bytes) {
 const MIN_W$1 = 320, MIN_H$1 = 200;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_DOC_BYTES = 8 * 1024 * 1024;
+const OPEN_SAFE_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
 const IMG_EXT = /\.(png|jpe?g|webp|gif)$/i;
 const HTML_EXT = /\.html?$/i;
 const MD_EXT = /\.(md|markdown|mdx)$/i;
@@ -2282,6 +2752,10 @@ const BOILERPLATE_MD = /^(readme|agents|claude|gemini|skill|changelog|contributi
 const DOC_NAME_HINT = /(?:plan|review|design|spec|brief|audit|roadmap|proposal|one[-_]?pager|dossier|study|notes|architecture|walkthrough|report)/i;
 const DOC_DIR_HINT = /(?:^|\/)(?:plans|reviews|research|docs|artifacts|design|studies|notes|specs)(?:\/|$)/i;
 const BUILD_DIR_RE = /(?:^|\/)(?:node_modules|\.git|dist|build|\.next|out|coverage|vendor|\.turbo|\.vercel|\.cache)(?:\/|$)/;
+const FORBIDDEN_REL_SEGMENT_RE = /^(\.env[^/]*|\.git|\.ssh|\.gnupg|\.aws|\.azure|\.kube|\.config|\.codex|\.claude|\.gemini|\.kimi-code|\.openscout|\.scout|keys?|keychains?|\.credentials|\.secrets|\.docker|credentials?|secrets?|sessions|transcripts|\.local|\.opencode|\.pi|\.grok|node_modules)$/i;
+const FORBIDDEN_NAME_TOKEN_RE = /(?:^|[._-])(?:credentials?|secrets?|tokens?)(?:[._-]|$)/i;
+const FORBIDDEN_EXT_RE = /\.(?:pem|key|p12|pfx|keystore)$/i;
+const FORBIDDEN_EXACT_FILE_RE = /^(?:\.env(?:\..+)?|id_rsa(?:\..+)?|id_ed25519(?:\..+)?|id_dsa(?:\..+)?|id_ecdsa(?:\..+)?|authorized_keys|known_hosts|\.npmrc|\.netrc|\.pypirc)$/i;
 const SHELL_CAPTURE_RE = /\b(?:scout\s+browser\s+screenshot|agent-browser\s+screenshot|playwright\s+screenshot|screencapture|action\s+(?:.*\s+)?capture)\b/i;
 const SCREENSHOT_TOOL_RE = /(?:screenshot|screencapture|capture_screen|save_screen)/i;
 const FORBIDDEN_EXACT = /* @__PURE__ */ new Set([
@@ -2301,6 +2775,88 @@ function safeRealpath(p) {
     return fs.realpathSync(p);
   } catch {
     return null;
+  }
+}
+function isForbiddenFilename(filePath) {
+  const base = path.basename(String(filePath || ""));
+  if (!base) return true;
+  return FORBIDDEN_EXACT_FILE_RE.test(base) || FORBIDDEN_EXT_RE.test(base) || FORBIDDEN_NAME_TOKEN_RE.test(base);
+}
+function isSecretRelativePath(relPath) {
+  const normalized = String(relPath || "").split(path.sep).filter(Boolean);
+  if (!normalized.length) return true;
+  if (normalized.some((seg) => seg === ".." || FORBIDDEN_REL_SEGMENT_RE.test(seg))) return true;
+  return isForbiddenFilename(normalized[normalized.length - 1]);
+}
+function verifyContainedNonSymlink(candidateResolved, allowedRoots) {
+  if (!candidateResolved || isForbiddenFilename(candidateResolved)) return null;
+  const rootSet = new Set(allowedRoots);
+  let anc = path.dirname(candidateResolved);
+  const relSegments = [path.basename(candidateResolved)];
+  let matchedRoot = null;
+  while (true) {
+    const ancReal = safeRealpath(anc);
+    if (ancReal && rootSet.has(ancReal)) {
+      try {
+        if (fs.lstatSync(anc).isSymbolicLink()) return null;
+      } catch {
+        return null;
+      }
+      matchedRoot = ancReal;
+      break;
+    }
+    const parent = path.dirname(anc);
+    if (parent === anc) break;
+    relSegments.unshift(path.basename(anc));
+    anc = parent;
+  }
+  if (!matchedRoot) return null;
+  const lexicalRel = relSegments.join(path.sep);
+  if (isSecretRelativePath(lexicalRel)) return null;
+  let cursor = matchedRoot;
+  for (let i = 0; i < relSegments.length; i++) {
+    const seg = relSegments[i];
+    if (!seg || seg === "." || seg === "..") return null;
+    cursor = path.join(cursor, seg);
+    let lst;
+    try {
+      lst = fs.lstatSync(cursor);
+    } catch {
+      return null;
+    }
+    if (lst.isSymbolicLink()) return null;
+    if (i < relSegments.length - 1 && !lst.isDirectory()) return null;
+  }
+  const real = safeRealpath(cursor);
+  if (!real || BUILD_DIR_RE.test(real) || !(real === matchedRoot || real.startsWith(matchedRoot + path.sep))) {
+    return null;
+  }
+  const resolvedRel = path.relative(matchedRoot, real);
+  if (!resolvedRel || resolvedRel.startsWith("..") || path.isAbsolute(resolvedRel) || isSecretRelativePath(resolvedRel)) {
+    return null;
+  }
+  return { real, allowedRoot: matchedRoot };
+}
+function readSafeFile(realPath, maxBytes) {
+  let fd;
+  try {
+    fd = fs.openSync(realPath, OPEN_SAFE_FLAGS);
+  } catch {
+    return null;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.nlink > 1 || st.size <= 0 || st.size > maxBytes) return null;
+    const buf = Buffer.alloc(st.size);
+    const read2 = fs.readSync(fd, buf, 0, st.size, 0);
+    return { bytes: buf.subarray(0, read2), st };
+  } catch {
+    return null;
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+    }
   }
 }
 function isSafeProjectRoot(dir) {
@@ -2340,7 +2896,7 @@ function allowedRootsFor(cwd, extraRoots = []) {
   return [...roots];
 }
 function resolveContainedFile(candidate, cwd, allowedRoots) {
-  if (!candidate || typeof candidate !== "string") return null;
+  if (!candidate || typeof candidate !== "string" || !allowedRoots?.length) return null;
   let cleaned = candidate.trim().replace(/^['"`]|['"`]$/g, "");
   if (!cleaned) return null;
   if (cleaned.startsWith("file://")) {
@@ -2352,36 +2908,30 @@ function resolveContainedFile(candidate, cwd, allowedRoots) {
   } else if (cleaned.startsWith("~/")) {
     cleaned = path.join(os.homedir(), cleaned.slice(2));
   }
-  const resolved = path.isAbsolute(cleaned) ? cleaned : cwd ? path.resolve(cwd, cleaned) : null;
+  const baseCwd = cwd ? safeRealpath(cwd) || cwd : null;
+  const resolved = path.isAbsolute(cleaned) ? path.resolve(cleaned) : baseCwd ? path.resolve(baseCwd, cleaned) : null;
   if (!resolved) return null;
-  const real = safeRealpath(resolved);
-  if (!real || BUILD_DIR_RE.test(real)) return null;
-  for (const root2 of allowedRoots) {
-    if (real === root2 || real.startsWith(root2 + path.sep)) return real;
-  }
-  return null;
+  return verifyContainedNonSymlink(resolved, allowedRoots)?.real || null;
 }
 const ingestedImages = /* @__PURE__ */ new Map();
 function ingestImageFile(filePath, cwd, allowedRoots, meta = {}) {
   const real = resolveContainedFile(filePath, cwd, allowedRoots);
   if (!real || !IMG_EXT.test(real)) return null;
-  let st;
-  try {
-    st = fs.statSync(real);
-  } catch {
-    return null;
-  }
-  if (!st.isFile() || st.size <= 0 || st.size > MAX_IMAGE_BYTES) return null;
+  const opened = readSafeFile(real, MAX_IMAGE_BYTES);
+  if (!opened) return null;
+  const { bytes, st } = opened;
   const cacheKey = `${real}:${Math.floor(st.mtimeMs)}:${st.size}`;
   if (ingestedImages.has(cacheKey)) {
     const hit = ingestedImages.get(cacheKey);
-    return hit ? { ...hit, ...meta, at: meta.at || hit.at } : null;
-  }
-  let bytes;
-  try {
-    bytes = fs.readFileSync(real);
-  } catch {
-    return null;
+    if (!hit) return null;
+    const provenance2 = meta.provenance || hit.provenance || "captured";
+    const subject2 = meta.subject || deriveSurfaceSubject({
+      url: meta.url || hit.url,
+      sourcePath: real,
+      projectRoot: meta.projectRoot || cwd || path.dirname(real),
+      kind: "screen"
+    });
+    return { ...hit, ...meta, provenance: provenance2, subject: subject2, at: meta.at || hit.at };
   }
   const size = imageSize(bytes);
   if (!size || size.w < MIN_W$1 || size.h < MIN_H$1) {
@@ -2390,6 +2940,7 @@ function ingestImageFile(filePath, cwd, allowedRoots, meta = {}) {
   }
   const ext = bytes[0] === 255 ? "jpg" : bytes[0] === 137 ? "png" : bytes[0] === 71 ? "gif" : "webp";
   const hash = crypto.createHash("sha1").update(bytes.toString("base64")).digest("hex").slice(0, 16);
+  const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   const dest = path.join(IMG, `${hash}.${ext}`);
   if (!fs.existsSync(dest)) {
     fs.mkdirSync(IMG, { recursive: true });
@@ -2403,15 +2954,25 @@ function ingestImageFile(filePath, cwd, allowedRoots, meta = {}) {
   }
   const base = {
     hash,
+    sha256,
     ext,
     w: size.w,
     h: size.h,
     at: Math.floor(st.mtimeMs),
     file: real,
-    url: null
+    url: null,
+    provenance: "captured",
+    revision: 1
   };
   ingestedImages.set(cacheKey, base);
-  return { ...base, ...meta, at: meta.at || base.at };
+  const provenance = meta.provenance || "captured";
+  const subject = meta.subject || deriveSurfaceSubject({
+    url: meta.url,
+    sourcePath: real,
+    projectRoot: meta.projectRoot || cwd || path.dirname(real),
+    kind: "screen"
+  });
+  return { ...base, ...meta, provenance, subject, at: meta.at || base.at };
 }
 const localShows = /* @__PURE__ */ new Map();
 const captionCache = /* @__PURE__ */ new Map();
@@ -2419,19 +2980,12 @@ function localShowUuid(realPath) {
   const h = crypto.createHash("sha1").update(`studio-local-show:${realPath}`).digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
-function sniffDocCaption(realPath, view, mtimeMs, size) {
+function sniffDocCaption(realPath, view, mtimeMs, size, headBytes) {
   const key2 = `${realPath}:${Math.floor(mtimeMs)}:${size}`;
   if (captionCache.has(key2)) return captionCache.get(key2);
   let caption = "";
   try {
-    const fd = fs.openSync(realPath, "r");
-    const buf = Buffer.alloc(Math.min(4096, size));
-    try {
-      fs.readSync(fd, buf, 0, buf.length, 0);
-    } finally {
-      fs.closeSync(fd);
-    }
-    const head = buf.toString("utf8");
+    const head = headBytes.subarray(0, Math.min(4096, headBytes.length)).toString("utf8");
     if (view === "html") {
       const m2 = /<title[^>]*>([^<]+)<\/title>/i.exec(head);
       if (m2?.[1]?.trim()) caption = m2[1].trim().slice(0, 72);
@@ -2445,16 +2999,11 @@ function sniffDocCaption(realPath, view, mtimeMs, size) {
   captionCache.set(key2, caption);
   return caption;
 }
-function isVisualHtmlCandidate(realPath, projectRoot) {
+function isVisualHtmlCandidate(realPath, projectRoot, headText) {
   if (!HTML_EXT.test(realPath) || BUILD_DIR_RE.test(realPath)) return false;
   const base = path.basename(realPath).toLowerCase();
   if (base === "index.html" && projectRoot && path.dirname(realPath) === projectRoot) {
-    try {
-      const head = fs.readFileSync(realPath, "utf8").slice(0, 2048);
-      if (/src=["']\/?src\/main\.[jt]sx?["']/i.test(head)) return false;
-    } catch {
-      return false;
-    }
+    if (/src=["']\/?src\/main\.[jt]sx?["']/i.test(headText.slice(0, 2048))) return false;
   }
   return true;
 }
@@ -2471,17 +3020,14 @@ function registerLocalShow(filePath, cwd, allowedRoots, opts = {}) {
   if (!real) return null;
   const allowedRoot = allowedRoots.find((r) => real === r || real.startsWith(r + path.sep));
   if (!allowedRoot) return null;
-  let st;
-  try {
-    st = fs.statSync(real);
-  } catch {
-    return null;
-  }
-  if (!st.isFile() || st.size <= 0 || st.size > MAX_DOC_BYTES) return null;
+  const opened = readSafeFile(real, MAX_DOC_BYTES);
+  if (!opened) return null;
+  const { bytes, st } = opened;
+  const headText = bytes.subarray(0, Math.min(4096, bytes.length)).toString("utf8");
   const projectRoot = opts.projectRoot || allowedRoot;
   let view = null;
   let mediaType = "application/octet-stream";
-  if (isVisualHtmlCandidate(real, projectRoot)) {
+  if (isVisualHtmlCandidate(real, projectRoot, headText)) {
     view = "html";
     mediaType = "text/html";
   } else if (isEditorialMarkdownCandidate(real, Boolean(opts.fromBrain))) {
@@ -2491,10 +3037,13 @@ function registerLocalShow(filePath, cwd, allowedRoots, opts = {}) {
     return null;
   }
   const id = localShowUuid(real);
-  const caption = opts.caption || sniffDocCaption(real, view, st.mtimeMs, st.size);
+  const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+  const caption = opts.caption || sniffDocCaption(real, view, st.mtimeMs, st.size, bytes);
+  const provenance = opts.provenance || "written";
+  const subject = deriveSurfaceSubject({ sourcePath: real, projectRoot, kind: view });
   const show = {
     id,
-    itemId: id,
+    itemId: subject.key,
     sessionId: opts.sessionId || null,
     agentId: opts.agentId || opts.harness || "local",
     harness: opts.harness || null,
@@ -2507,10 +3056,14 @@ function registerLocalShow(filePath, cwd, allowedRoots, opts = {}) {
     view,
     mediaType,
     size: st.size,
+    sha256,
     caption,
     at: opts.at || Math.floor(st.mtimeMs),
     createdAt: opts.at || Math.floor(st.mtimeMs),
-    versions: 1,
+    versions: opts.versions || 1,
+    revision: opts.revision || 1,
+    provenance,
+    subject,
     local: true
   };
   localShows.set(id, { show, realPath: real, allowedRoot });
@@ -2522,13 +3075,9 @@ function localShowById(id) {
 function localShowBytes(id) {
   const entry = localShows.get(id);
   if (!entry) return null;
-  const real = safeRealpath(entry.realPath);
-  if (!real || !(real === entry.allowedRoot || real.startsWith(entry.allowedRoot + path.sep))) return null;
-  try {
-    return fs.readFileSync(real);
-  } catch {
-    return null;
-  }
+  const verified = verifyContainedNonSymlink(entry.realPath, [entry.allowedRoot]);
+  if (!verified) return null;
+  return readSafeFile(verified.real, MAX_DOC_BYTES)?.bytes || null;
 }
 function extractImageTokens(text) {
   if (!text || typeof text !== "string") return [];
@@ -2574,8 +3123,7 @@ const WORKSPACE_DIRS = [
   "reviews",
   "artifacts",
   "scratch",
-  "docs/studies",
-  ".openscout/artifacts"
+  "docs/studies"
 ];
 const wsCache = /* @__PURE__ */ new Map();
 function walkShallow(dir, maxDepth, out = [], depth = 0) {
@@ -2619,8 +3167,8 @@ function discoverWorkspaceArtifacts(roots, since) {
     const recent = [];
     for (const file of new Set(candidates)) {
       try {
-        const st = fs.statSync(file);
-        if (st.mtimeMs >= since && st.size > 0) recent.push({ file, mtimeMs: st.mtimeMs });
+        const st = fs.lstatSync(file);
+        if (st.isFile() && st.mtimeMs >= since && st.size > 0) recent.push({ file, mtimeMs: st.mtimeMs });
       } catch {
       }
     }
@@ -2634,7 +3182,9 @@ function discoverWorkspaceArtifacts(roots, since) {
             at: Math.floor(item.mtimeMs),
             tool: "workspace",
             caption: path.basename(item.file),
-            open: false
+            open: false,
+            provenance: "workspace",
+            projectRoot: realRoot
           });
           if (sc) screens.push(sc);
         }
@@ -2643,6 +3193,7 @@ function discoverWorkspaceArtifacts(roots, since) {
           projectRoot: realRoot,
           worktree: realRoot,
           harness: "scout",
+          provenance: "workspace",
           at: Math.floor(item.mtimeMs)
         });
         if (sh) shows.push(sh);
@@ -3114,8 +3665,11 @@ function closeTurn(s) {
   }
   for (const sc of kept) {
     sc.caption = prose(s.said).slice(0, 600);
+    sc.provenance ||= "captured";
     const prev = sc.subject && s.lastOf.get(sc.subject);
     if (prev && prev.hash === sc.hash) continue;
+    sc.revision = prev ? (prev.revision || 1) + 1 : 1;
+    if (prev) sc.supersedes = prev.hash;
     if (prev && sameShape(sc, prev)) sc.before = { hash: prev.hash, ext: prev.ext, at: prev.at };
     if (sc.subject) s.lastOf.set(sc.subject, sc);
     s.screens.push(sc);
@@ -3319,7 +3873,17 @@ async function read(file, owner, meta = {}) {
 }
 const stateOf$1 = (file) => states.get(file) || null;
 function screensOf$1(s) {
-  const open = s.turnScreens.map((sc) => ({ ...sc, caption: prose(s.said).slice(0, 600), open: true }));
+  const open = s.turnScreens.map((sc) => {
+    const prev = sc.subject && s.lastOf.get(sc.subject);
+    return {
+      ...sc,
+      provenance: sc.provenance || "captured",
+      revision: prev && prev.hash !== sc.hash ? (prev.revision || 1) + 1 : prev?.revision || 1,
+      ...prev && prev.hash !== sc.hash ? { supersedes: prev.hash } : {},
+      caption: prose(s.said).slice(0, 600),
+      open: true
+    };
+  });
   return [...s.screens, ...open];
 }
 const root = path.join(HOME, "shared-screens");
@@ -3356,145 +3920,15 @@ function sharedInWindow(since) {
     return screens.length ? [{ id: d.name, screens }] : [];
   });
 }
-function runtimeUrl() {
-  const env = process.env.SCOUT_RUNTIME_URL || process.env.OPENSCOUT_BROKER_URL;
-  if (env) return env.replace(/\/$/, "");
-  try {
-    const home = process.env.OPENSCOUT_HOME || path.join(os.homedir(), ".openscout");
-    const c = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
-    const port = Number(c?.ports?.broker);
-    if (Number.isInteger(port) && port > 0) {
-      const host = !c.host || c.host === "0.0.0.0" || c.host === "::" ? "127.0.0.1" : c.host;
-      return `http://${host}:${port}`;
-    }
-  } catch {
-  }
-  return "http://127.0.0.1:43110";
-}
-async function get(p, ms = 5e3) {
-  const res = await fetch(`${runtimeUrl()}${p}`, { signal: AbortSignal.timeout(ms) });
-  if (!res.ok) throw new Error(`${p}: ${res.status}`);
-  return res;
-}
-const MD = /\.(md|markdown|mdx)$/i;
-const HTML = /\.html?$/i;
-function viewOf(show) {
-  const p = show.sourcePath || "";
-  if (show.kind === "image") return "image";
-  if (show.kind === "video") return "video";
-  if (MD.test(p) || show.mediaType === "text/markdown") return "markdown";
-  if (HTML.test(p) || show.mediaType === "text/html") return "html";
-  if (show.mediaType === "application/pdf") return "pdf";
-  if (/^text\/|json|xml|yaml|toml/.test(show.mediaType)) return "text";
-  return "file";
-}
-const listed = /* @__PURE__ */ new Map();
-const known = /* @__PURE__ */ new Map();
-async function showsFor(roots) {
-  const out = [];
-  const globalHit = listed.get("*");
-  if (globalHit && Date.now() - globalHit.at < 8e3) {
-    out.push(...globalHit.shows);
-  } else {
-    let globalShows = [];
-    try {
-      globalShows = (await (await get("/v1/shows")).json()).shows || [];
-    } catch {
-    }
-    listed.set("*", { at: Date.now(), shows: globalShows });
-    out.push(...globalShows);
-  }
-  await Promise.all([...new Set(roots.filter(Boolean))].map(async (root2) => {
-    const hit = listed.get(root2);
-    if (hit && Date.now() - hit.at < (following.has(root2) ? 3e5 : 8e3)) return out.push(...hit.shows);
-    let shows = [];
-    try {
-      shows = (await (await get(`/v1/shows?projectRoot=${encodeURIComponent(root2)}`)).json()).shows || [];
-    } catch {
-    }
-    listed.set(root2, { at: Date.now(), shows });
-    out.push(...shows);
-  }));
-  const all = [...new Map(out.map((s) => [s.id, s])).values()];
-  const latest = /* @__PURE__ */ new Map();
-  for (const s of all) {
-    known.set(s.id, s);
-    const was = latest.get(s.itemId);
-    if (!was || s.createdAt > was.createdAt) latest.set(s.itemId, s);
-  }
-  return [...latest.values()].sort((a, b2) => b2.createdAt - a.createdAt).map((s) => ({
-    id: s.id,
-    itemId: s.itemId,
-    sessionId: s.sessionId || null,
-    agentId: s.agentId,
-    harness: s.harness || null,
-    projectRoot: s.projectRoot,
-    worktree: s.worktree,
-    branch: s.branch || "",
-    path: s.sourcePath,
-    name: path.basename(s.sourcePath),
-    view: viewOf(s),
-    mediaType: s.mediaType,
-    size: s.byteSize,
-    caption: s.caption || "",
-    at: s.createdAt,
-    versions: all.filter((o) => o.itemId === s.itemId).length
-  }));
-}
-const showById = (id) => known.get(id) || null;
-const following = /* @__PURE__ */ new Map();
-const listeners$1 = /* @__PURE__ */ new Set();
-function onShows(fn) {
-  listeners$1.add(fn);
-  return () => listeners$1.delete(fn);
-}
-function watchShows(roots) {
-  for (const root2 of new Set(roots.filter(Boolean))) if (!following.has(root2)) {
-    following.set(root2, true);
-    follow(root2, 0);
-  }
-}
-async function follow(root2, failures) {
-  let opened = false;
-  try {
-    const res = await fetch(`${runtimeUrl()}/v1/shows/events?projectRoot=${encodeURIComponent(root2)}&since=${Date.now()}`);
-    if (!res.ok || !res.body) throw new Error(String(res.status));
-    opened = true;
-    if (failures) {
-      listed.delete(root2);
-      for (const fn of listeners$1) fn(root2);
-    }
-    const text = new TextDecoder();
-    let buf = "";
-    for await (const chunk of res.body) {
-      buf += text.decode(chunk, { stream: true });
-      let i;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        const block = buf.slice(0, i);
-        buf = buf.slice(i + 2);
-        if (/^event: show\.created$/m.test(block)) {
-          listed.delete(root2);
-          for (const fn of listeners$1) fn(root2);
-        }
-      }
-    }
-  } catch {
-  }
-  const n = opened ? 1 : failures + 1;
-  setTimeout(() => follow(root2, n), Math.min(6e4, 2e3 * 2 ** Math.min(n, 5)));
-}
-async function showBytes(id) {
-  const res = await get(`/v1/shows/${encodeURIComponent(id)}/bytes`, 2e4);
-  return Buffer.from(await res.arrayBuffer());
-}
 const WORKING_MS = 9e4;
-let discovery = { at: 0, up: false, byId: /* @__PURE__ */ new Map() };
+let discovery = { url: "", at: 0, up: false, byId: /* @__PURE__ */ new Map() };
 const FOLLOW = 24;
 async function discover() {
-  if (Date.now() - discovery.at < 15e3) return discovery;
-  const next2 = { at: Date.now(), up: false, byId: /* @__PURE__ */ new Map() };
+  const url = runtimeUrl();
+  if (discovery.url === url && Date.now() - discovery.at < 15e3) return discovery;
+  const next2 = { url, at: Date.now(), up: false, byId: /* @__PURE__ */ new Map() };
   try {
-    const res = await fetch(`${runtimeUrl()}/v1/tail/discover`, { signal: AbortSignal.timeout(5e3) });
+    const res = await fetch(`${url}/v1/tail/discover`, { signal: AbortSignal.timeout(5e3) });
     if (res.ok) {
       const d = await res.json();
       next2.up = true;
@@ -3546,7 +3980,7 @@ function repoOf(cwd) {
   repoCache.set(cwd, r);
   return r;
 }
-let branchCache = /* @__PURE__ */ new Map();
+const branchCache = /* @__PURE__ */ new Map();
 function branchOf(cwd) {
   if (!cwd) return "";
   const hit = branchCache.get(cwd);
@@ -3607,23 +4041,278 @@ function transcriptsSince(since) {
 const MAX_LONG_WINDOW_FILES = 80;
 const loads = /* @__PURE__ */ new Map();
 function load$2(hours) {
+  const curUrl = runtimeUrl();
   const was = loads.get(hours);
-  if (was && (!was.done || Date.now() - was.endedAt < 1e4)) return was;
+  if (was && was.url === curUrl && (!was.done || was.files.length > 0 && Date.now() - was.endedAt < 1e4)) return was;
   let files = transcriptsSince(Date.now() - hours * 36e5).sort((a, b2) => b2.mtime - a.mtime);
   if (hours > 72 && files.length > MAX_LONG_WINDOW_FILES) files = files.slice(0, MAX_LONG_WINDOW_FILES);
-  const l = { files, done: false, endedAt: 0, first: !was, start: new Map(files.map((t) => [t.file, stateOf$1(t.file)?.offset || 0])) };
+  const l = { url: curUrl, files, done: files.length === 0, endedAt: files.length === 0 ? Date.now() : 0, first: !was, start: new Map(files.map((t) => [t.file, stateOf$1(t.file)?.offset || 0])) };
   loads.set(hours, l);
-  (async () => {
-    for (const t of files) await readTranscript(t.file, t.session, t).catch(() => null);
-    l.done = true;
-    l.endedAt = Date.now();
-  })();
+  if (files.length > 0) {
+    (async () => {
+      for (const t of files) await readTranscript(t.file, t.session, t).catch(() => null);
+      l.done = true;
+      l.endedAt = Date.now();
+    })();
+  }
   return l;
+}
+function pickSessionTitle(d, o, own, fallback) {
+  return [d?.customTitle, d?.aiTitle, d?.title, d?.harnessTitle, o?.name, d?.sessionName].find((t) => t && !/^session-[a-z0-9]+-[a-z0-9]+/.test(t) && !isWrapped(t)) || own?.prompt?.slice(0, 80) || fallback;
+}
+function stackFallbackProjectRevisions(project) {
+  const provenanceOrder = { workspace: 0, captured: 1, written: 2, shown: 3 };
+  const entries2 = [];
+  for (const session of project.sessions) {
+    for (const sh of session.shows || []) {
+      const subject = sh.subject || deriveSurfaceSubject({
+        sourcePath: sh.path,
+        projectRoot: project.root,
+        kind: sh.view === "html" ? "html" : sh.view === "markdown" ? "markdown" : sh.view === "image" ? "screen" : "document"
+      });
+      sh.subject = subject;
+      sh.provenance ||= "shown";
+      entries2.push({ kind: "show", ref: sh, key: subject.key, at: sh.at, prov: sh.provenance, sha: sh.sha256 || sh.id });
+    }
+    for (const sc of session.screens || []) {
+      const subject = sc.subject && typeof sc.subject === "object" ? sc.subject : deriveSurfaceSubject({
+        url: sc.url || void 0,
+        sourcePath: sc.file || `${sc.hash}.${sc.ext}`,
+        projectRoot: project.root,
+        kind: "screen"
+      });
+      sc.subject = subject;
+      sc.provenance ||= sc.tool === "workspace" ? "workspace" : "captured";
+      entries2.push({ kind: "screen", ref: sc, key: subject.key, at: sc.at, prov: sc.provenance, sha: sc.sha256 || sc.hash });
+    }
+  }
+  const bySubject = /* @__PURE__ */ new Map();
+  for (const e of entries2) {
+    const list = bySubject.get(e.key);
+    if (list) list.push(e);
+    else bySubject.set(e.key, [e]);
+  }
+  for (const group of bySubject.values()) {
+    group.sort((a, b2) => a.at - b2.at || (provenanceOrder[a.prov] ?? 0) - (provenanceOrder[b2.prov] ?? 0));
+    let rev = 0;
+    let prevId = null;
+    let prevSha = null;
+    for (const e of group) {
+      if (prevSha && e.sha === prevSha) {
+        e.ref.revision = Math.max(e.ref.revision || 1, rev);
+        continue;
+      }
+      rev = Math.max(rev + 1, e.ref.revision || 1, e.ref.versions || 1);
+      e.ref.revision = rev;
+      if (e.kind === "show") e.ref.versions = Math.max(e.ref.versions || 1, rev);
+      if (prevId && !e.ref.supersedes) e.ref.supersedes = prevId;
+      prevId = e.ref.id;
+      prevSha = e.sha;
+    }
+  }
+}
+function buildObservedProjects(inventory, since, bySession, disc, open) {
+  const rawItems = (inventory.items || []).filter((item) => (item.createdAt || 0) >= since);
+  const screenById = /* @__PURE__ */ new Map();
+  for (const item of inventory.items || []) {
+    if (item.kind !== "screen" || item.provenance === "shown") continue;
+    screenById.set(item.id, {
+      item,
+      hash: surfaceScreenHash(item),
+      ext: extFromMedia(item.mediaType, item.sourcePath),
+      w: item.dimensions?.width || 1280,
+      h: item.dimensions?.height || 800
+    });
+  }
+  const showGroups = /* @__PURE__ */ new Map();
+  const screenItems = [];
+  for (const item of rawItems) {
+    if (item.kind === "screen" && item.provenance !== "shown") {
+      screenItems.push(item);
+      continue;
+    }
+    const gKey = `${item.projectRoot || ""}\0${item.subject?.key || item.sourcePath || item.id}`;
+    const list = showGroups.get(gKey);
+    if (list) list.push(item);
+    else showGroups.set(gKey, [item]);
+  }
+  const projects = /* @__PURE__ */ new Map();
+  const sessionBuckets = /* @__PURE__ */ new Map();
+  function ensureBucket(projectRoot, worktree, branch, sid, harness, provenance) {
+    const repo = repoOf(projectRoot || worktree);
+    const rootKey = repo.root || projectRoot || worktree;
+    if (!projects.has(rootKey)) {
+      projects.set(rootKey, { name: repo.name, root: rootKey, sessions: [] });
+    }
+    const bKey = `${rootKey}\0${sid}`;
+    let bucket = sessionBuckets.get(bKey);
+    if (!bucket) {
+      bucket = {
+        repo: projects.get(rootKey),
+        sid,
+        harness: harness || "scout",
+        cwd: worktree || rootKey,
+        branch: branch || "",
+        provenance,
+        screens: [],
+        shows: []
+      };
+      sessionBuckets.set(bKey, bucket);
+    } else {
+      if (!bucket.branch && branch) bucket.branch = branch;
+      if (!bucket.cwd && worktree) bucket.cwd = worktree;
+    }
+    return bucket;
+  }
+  for (const item of screenItems) {
+    const repo = repoOf(item.projectRoot || item.worktree);
+    const sid = item.session?.nativeSessionId || (item.provenance === "workspace" ? `workspace:${repo.name}` : `captured:${repo.name}`);
+    const harness = item.session?.harness || (item.provenance === "workspace" ? "scout" : "claude");
+    const bucket = ensureBucket(item.projectRoot, item.worktree, item.branch, sid, harness, item.provenance);
+    const cur = screenById.get(item.id) || {
+      hash: surfaceScreenHash(item),
+      ext: extFromMedia(item.mediaType, item.sourcePath),
+      w: item.dimensions?.width || 1280,
+      h: item.dimensions?.height || 800
+    };
+    const prev = item.supersedes ? screenById.get(item.supersedes) : null;
+    const before = prev && sameShape({ w: cur.w, h: cur.h }, { w: prev.w, h: prev.h }) ? { hash: prev.hash, ext: prev.ext, at: prev.item.createdAt } : null;
+    bucket.screens.push({
+      id: `${sid}:${cur.hash}`,
+      surfaceId: item.id,
+      hash: cur.hash,
+      ext: cur.ext,
+      w: cur.w,
+      h: cur.h,
+      at: item.createdAt,
+      tool: item.provenance === "workspace" ? "workspace" : item.session?.harness || "captured",
+      url: item.url || null,
+      file: item.sourcePath || null,
+      caption: item.caption || item.title || "",
+      before,
+      open: false,
+      provenance: item.provenance,
+      revision: item.revision || 1,
+      ...item.supersedes ? { supersedes: item.supersedes } : {},
+      ...item.subject ? { subject: item.subject } : {}
+    });
+  }
+  for (const group of showGroups.values()) {
+    group.sort((a, b2) => (a.revision || 1) - (b2.revision || 1) || a.createdAt - b2.createdAt);
+    const latest = group[group.length - 1];
+    const repo = repoOf(latest.projectRoot || latest.worktree);
+    const sid = latest.session?.nativeSessionId || (latest.provenance === "workspace" ? `workspace:${repo.name}` : `shown:${latest.worktree || latest.projectRoot || repo.name}`);
+    const harness = latest.session?.harness || "scout";
+    const bucket = ensureBucket(latest.projectRoot, latest.worktree, latest.branch, sid, harness, latest.provenance);
+    const sourcePath = latest.sourcePath || latest.subject?.label || latest.title || latest.id;
+    const revision = Math.max(latest.revision || 1, group.length);
+    const caption = latest.caption || (latest.title && latest.title !== path.basename(sourcePath) ? latest.title : "");
+    bucket.shows.push({
+      id: latest.id,
+      itemId: latest.subject?.key || latest.id,
+      sessionId: latest.session?.nativeSessionId || null,
+      agentId: latest.agentId || latest.session?.harness || latest.provenance,
+      harness: latest.session?.harness || null,
+      projectRoot: latest.projectRoot || bucket.repo.root,
+      worktree: latest.worktree || latest.projectRoot || bucket.repo.root,
+      branch: latest.branch || bucket.branch || "",
+      path: sourcePath,
+      name: path.basename(sourcePath),
+      view: viewOf({ ...latest, sourcePath }),
+      mediaType: latest.mediaType,
+      size: latest.byteSize,
+      caption,
+      at: latest.createdAt,
+      versions: revision,
+      provenance: latest.provenance,
+      revision,
+      ...latest.supersedes ? { supersedes: latest.supersedes } : {},
+      ...latest.subject ? { subject: latest.subject } : {}
+    });
+  }
+  for (const bucket of sessionBuckets.values()) {
+    const rec = bySession.get(bucket.sid);
+    const all = rec ? [rec.own, ...rec.parts].filter(Boolean) : [];
+    const own = rec?.own || all[0] || null;
+    const d = disc.byId.get(bucket.sid) || {};
+    const o = open.get(bucket.sid);
+    const cwd = own?.cwd || d.cwd || bucket.cwd || bucket.repo.root;
+    const branch = bucket.branch || branchOf(cwd);
+    const seenScreenHashes = /* @__PURE__ */ new Set();
+    const screens = [];
+    for (const sc of bucket.screens.sort((a, b2) => a.at - b2.at)) {
+      if (seenScreenHashes.has(sc.hash)) continue;
+      seenScreenHashes.add(sc.hash);
+      screens.push(sc);
+    }
+    const shows = bucket.shows.sort((a, b2) => b2.at - a.at);
+    if (!screens.length && !shows.length) continue;
+    const allAt = [
+      ...all.map((s) => s.lastAt || 0),
+      ...screens.map((sc) => sc.at || 0),
+      ...shows.map((sh) => sh.at || 0)
+    ].filter((x2) => x2 > 0);
+    const lastAt = allAt.length ? Math.max(...allAt) : Date.now();
+    const firstAt = own?.firstAt || (allAt.length ? Math.min(...allAt) : lastAt);
+    const working = !!o && (o.status === "busy" || Date.now() - lastAt < WORKING_MS && (!own || own.lastStop !== "end_turn" || own.openTools > 0));
+    const defaultTitle = bucket.sid.startsWith("workspace:") ? `Workspace · ${bucket.repo.name}` : bucket.sid.startsWith("shown:") ? `Shown from ${path.basename(cwd)}` : shows[0]?.caption || screens[0]?.caption || bucket.sid.slice(0, 8);
+    bucket.repo.sessions.push({
+      id: bucket.sid,
+      harness: own?.harness || bucket.harness || d.source || "scout",
+      cwd,
+      branch,
+      title: pickSessionTitle(d, o, own, defaultTitle),
+      prompt: own?.prompt || "",
+      firstAt,
+      lastAt,
+      open: !!o,
+      working,
+      attention: d.attention || d.waitingFor || null,
+      now: all.map((s) => s.now).filter(Boolean).sort((a, b2) => b2.at - a.at)[0]?.text || null,
+      screens,
+      shows
+    });
+  }
+  for (const { id, screens } of sharedInWindow(since)) {
+    const first = screens[0], repo = repoOf(first.cwd);
+    if (!projects.has(repo.root)) projects.set(repo.root, { ...repo, sessions: [] });
+    const group = projects.get(repo.root);
+    let session = group.sessions.find((s) => s.id === id);
+    if (!session) {
+      session = {
+        id,
+        harness: first.harness,
+        cwd: first.cwd,
+        branch: branchOf(first.cwd),
+        title: first.caption || `Screens from ${first.harness}`,
+        prompt: "",
+        firstAt: screens.at(-1).at,
+        lastAt: first.at,
+        open: false,
+        working: false,
+        now: null,
+        attention: null,
+        screens: [],
+        shows: []
+      };
+      group.sessions.push(session);
+    }
+    const seenHashes = new Set(session.screens.map((s) => s.hash));
+    for (const sc of screens) {
+      if (!seenHashes.has(sc.hash)) {
+        session.screens.push({ ...sc, id: `${id}:${sc.hash}`, provenance: "captured", revision: 1 });
+      }
+    }
+    session.screens.sort((a, b2) => a.at - b2.at);
+    session.lastAt = Math.max(session.lastAt, first.at);
+  }
+  return [...projects.values()].filter((p) => p.sessions.length > 0);
 }
 async function canvas(hours = 4) {
   const since = Date.now() - hours * 36e5;
   const l = load$2(hours);
-  const [disc, open] = [await discover(), openSessions()];
+  const [disc, obs] = await Promise.all([discover(), observedSurfaces(hours * 36e5)]);
+  const open = openSessions();
   const bySession = /* @__PURE__ */ new Map();
   let read2 = 0, total = 0;
   const partial = /* @__PURE__ */ new Set();
@@ -3656,14 +4345,44 @@ async function canvas(hours = 4) {
       if (evtAt >= since) seen.set(t.cwd, Math.max(seen.get(t.cwd) || 0, evtAt));
     }
   }
+  for (const item of obs.inventory?.items || []) {
+    if (item.projectRoot) seen.set(item.projectRoot, Math.max(seen.get(item.projectRoot) || 0, item.createdAt || 0));
+  }
   const latestFor = /* @__PURE__ */ new Map();
   for (const [cwd, at] of seen) {
     const r = repoOf(cwd).root;
     if (r) latestFor.set(r, Math.max(latestFor.get(r) || 0, at));
   }
   const roots = [...latestFor].sort((a, b2) => b2[1] - a[1]).map(([r]) => r).slice(0, FOLLOW);
-  const shows = disc.up ? (await showsFor(roots)).filter((sh) => sh.at >= since) : [];
-  if (disc.up) watchShows(roots);
+  const runtimeUp = disc.up || obs.reachable;
+  if (obs.supported && obs.inventory) {
+    watchShows(roots);
+    const list2 = buildObservedProjects(obs.inventory, since, bySession, disc, open);
+    for (const p of list2) p.sessions.sort((a, b2) => b2.lastAt - a.lastAt);
+    list2.sort((a, b2) => b2.sessions[0].lastAt - a.sessions[0].lastAt);
+    const sessionsCount = (/* @__PURE__ */ new Set([
+      ...l.files.map((t) => t.session),
+      ...list2.flatMap((p) => p.sessions.map((s) => s.id))
+    ])).size;
+    const out2 = {
+      at: Date.now(),
+      hours,
+      scout: {
+        up: true,
+        observedSurfaces: true,
+        url: runtimeUrl(),
+        shows: obs.inventory.counts?.shown ?? list2.flatMap((p) => p.sessions.flatMap((s) => s.shows)).filter((sh) => sh.provenance === "shown").length,
+        counts: obs.inventory.counts
+      },
+      projects: list2,
+      loading: { done: true, first: l.first, read: total, total, sessions: sessionsCount }
+    };
+    completed.add(hours);
+    keepSnapshot(hours, out2);
+    return out2;
+  }
+  const shows = runtimeUp ? (await showsFor(roots)).filter((sh) => sh.at >= since) : [];
+  if (runtimeUp) watchShows(roots);
   const showsBy = /* @__PURE__ */ new Map();
   for (const sh of shows) showsBy.set(sh.sessionId, [...showsBy.get(sh.sessionId) || [], sh]);
   const brainBySession = /* @__PURE__ */ new Map();
@@ -3679,7 +4398,7 @@ async function canvas(hours = 4) {
       for (const sh of s.writtenShows?.values() || []) {
         if (sh.at >= since && !seenShowPaths.has(sh.path)) {
           seenShowPaths.add(sh.path);
-          written.push(sh);
+          written.push({ ...sh, provenance: sh.provenance || "written" });
         }
       }
     }
@@ -3687,13 +4406,21 @@ async function canvas(hours = 4) {
       for (const sh of brain.shows) {
         if (!seenShowPaths.has(sh.path)) {
           seenShowPaths.add(sh.path);
-          written.push(sh);
+          written.push({ ...sh, provenance: sh.provenance || "written" });
         }
       }
     }
-    const runtimeShown = showsBy.get(rec.id) || [];
+    const runtimeShown = (showsBy.get(rec.id) || []).map((sh) => ({ ...sh, provenance: "shown" }));
     showsBy.delete(rec.id);
-    for (const sh of runtimeShown) seenShowPaths.add(sh.path);
+    for (const sh of runtimeShown) {
+      seenShowPaths.add(sh.path);
+      const priorWritten = written.find((w2) => w2.path === sh.path);
+      if (priorWritten && priorWritten.sha256 && sh.sha256 && priorWritten.sha256 !== sh.sha256) {
+        sh.revision = Math.max(sh.revision || 1, 2);
+        sh.versions = Math.max(sh.versions || 1, 2);
+        sh.supersedes ||= priorWritten.id;
+      }
+    }
     const shown = [...runtimeShown, ...written.filter((w2) => !runtimeShown.some((r) => r.path === w2.path))].sort((a, b2) => b2.at - a.at);
     const rawScreens = [
       ...all.flatMap(screensOf$1).filter((sc) => sc.at >= since),
@@ -3731,16 +4458,13 @@ async function canvas(hours = 4) {
       harness: own.harness || d.source || "claude",
       cwd,
       branch,
-      // Claude's own title first; Scout's relay names (session-…-relay-agent) say nothing to a person
-      // and a title that is only Scout's delivery wrapping says nothing either: the task says more
-      title: [d.customTitle, d.aiTitle, d.title, d.harnessTitle, o?.name, d.sessionName].find((t) => t && !/^session-[a-z0-9]+-[a-z0-9]+/.test(t) && !isWrapped(t)) || own.prompt.slice(0, 80) || rec.id.slice(0, 8),
+      title: pickSessionTitle(d, o, own, rec.id.slice(0, 8)),
       prompt: own.prompt,
       firstAt: own.firstAt || lastAt,
       lastAt,
       open: !!o,
       working,
       attention: d.attention || d.waitingFor || null,
-      // what it did last, from it or one of its subagents, whichever was later
       now: all.map((s) => s.now).filter(Boolean).sort((a, b2) => b2.at - a.at)[0]?.text || null,
       screens: dedupScreens.map((sc) => ({
         id: `${rec.id}:${sc.hash}`,
@@ -3754,7 +4478,10 @@ async function canvas(hours = 4) {
         file: sc.file,
         caption: sc.caption || "",
         before: sc.before || null,
-        open: !!sc.open
+        open: !!sc.open,
+        provenance: sc.provenance || "captured",
+        revision: sc.revision || (sc.before ? 2 : 1),
+        ...sc.supersedes ? { supersedes: sc.supersedes } : {}
       })),
       shows: shown
     };
@@ -3790,9 +4517,11 @@ async function canvas(hours = 4) {
         file: sc.file,
         caption: sc.caption || "",
         before: null,
-        open: false
+        open: false,
+        provenance: "captured",
+        revision: sc.revision || 1
       })),
-      shows: brain.shows
+      shows: brain.shows.map((sh) => ({ ...sh, provenance: sh.provenance || "written" }))
     };
     if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
     projects.get(repo.root).sessions.push(session);
@@ -3817,13 +4546,17 @@ async function canvas(hours = 4) {
         now: null,
         attention: null,
         screens: [],
-        shows: showsBy.get(id) || []
+        shows: (showsBy.get(id) || []).map((sh) => ({ ...sh, provenance: "shown" }))
       };
       showsBy.delete(id);
       group.sessions.push(session);
     }
     const seenHashes = new Set(session.screens.map((s) => s.hash));
-    for (const sc of screens) if (!seenHashes.has(sc.hash)) session.screens.push({ ...sc, id: id + ":" + sc.hash });
+    for (const sc of screens) {
+      if (!seenHashes.has(sc.hash)) {
+        session.screens.push({ ...sc, id: `${id}:${sc.hash}`, provenance: "captured", revision: 1 });
+      }
+    }
     session.screens.sort((a, b2) => a.at - b2.at);
     session.lastAt = Math.max(session.lastAt, first.at);
   }
@@ -3843,7 +4576,7 @@ async function canvas(hours = 4) {
       attention: null,
       now: null,
       screens: [],
-      shows: list2
+      shows: list2.map((sh) => ({ ...sh, provenance: "shown" }))
     };
     if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
     projects.get(repo.root).sessions.push(session);
@@ -3861,7 +4594,10 @@ async function canvas(hours = 4) {
     const unclaimedScreens = ws.screens.filter((sc) => !claimedPaths.has(sc.file));
     if (!unclaimedShows.length && !unclaimedScreens.length) continue;
     const branch = branchOf(ws.root);
-    for (const sh of unclaimedShows) sh.branch = branch || sh.branch;
+    for (const sh of unclaimedShows) {
+      sh.branch = branch || sh.branch;
+      sh.provenance = "workspace";
+    }
     const wsId = `workspace:${repo.name}`;
     const allAt = [...unclaimedShows.map((s) => s.at), ...unclaimedScreens.map((s) => s.at)];
     const wsSession = {
@@ -3889,7 +4625,9 @@ async function canvas(hours = 4) {
         file: sc.file,
         caption: sc.caption || "",
         before: null,
-        open: false
+        open: false,
+        provenance: "workspace",
+        revision: sc.revision || 1
       })),
       shows: unclaimedShows
     };
@@ -3897,15 +4635,17 @@ async function canvas(hours = 4) {
     projects.get(repo.root).sessions.push(wsSession);
   }
   const list = [...projects.values()];
-  for (const p of list) p.sessions.sort((a, b2) => b2.lastAt - a.lastAt);
+  for (const p of list) {
+    stackFallbackProjectRevisions(p);
+    p.sessions.sort((a, b2) => b2.lastAt - a.lastAt);
+  }
   list.sort((a, b2) => b2.sessions[0].lastAt - a.sessions[0].lastAt);
   const sessions = new Set(l.files.map((t) => t.session)).size;
   const out = {
     at: Date.now(),
     hours,
-    scout: { up: disc.up, url: runtimeUrl(), shows: shows.length },
+    scout: { up: runtimeUp, observedSurfaces: false, url: runtimeUrl(), shows: shows.length },
     projects: list,
-    // how far the read has come, by bytes, so a bar moves evenly
     loading: { done: l.done, first: l.first, read: read2, total, sessions }
   };
   if (l.done) {
@@ -3928,7 +4668,7 @@ function snapshot(hours, since) {
   }
   return snapshots.get(hours).map((p) => ({ ...p, sessions: p.sessions.filter((s) => s.lastAt >= since).map((s) => ({ ...s, working: false, shows: s.shows || [] })) })).filter((p) => p.sessions.length);
 }
-let savedAt = /* @__PURE__ */ new Map();
+const savedAt = /* @__PURE__ */ new Map();
 function keepSnapshot(hours, out) {
   if (Date.now() - (savedAt.get(hours) || 0) < 3e4) return;
   savedAt.set(hours, Date.now());
@@ -4072,6 +4812,7 @@ async function deliver(id) {
   }
   carrying.add(id);
   try {
+    await materializeRuntimeScreen(n.screen.hash, n.screen.ext);
     const { json, err } = await scout(["session", "send", n.session, message(n), ...n.harness === "codex" ? ["--harness", "codex"] : []]);
     update(id, (x2) => {
       if (json?.ok) {
@@ -4395,13 +5136,46 @@ function stop() {
   ticker = null;
   sent.clear();
 }
-const LOCAL$1 = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+const LOCAL$1 = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const LOOPBACK_IP$1 = /^(?:127\.\d+\.\d+\.\d+|::1|\[::1\]|::ffff:127\.\d+\.\d+\.\d+)$/i;
+function headerString(v2) {
+  return Array.isArray(v2) ? v2.join(",") : typeof v2 === "string" ? v2 : "";
+}
+function truthyHeader(v2) {
+  const s = headerString(v2).trim().toLowerCase();
+  return Boolean(s && s !== "0" && s !== "false" && s !== "no");
+}
 function local(req) {
-  if (!LOCAL$1.test(req.headers.host || "")) return false;
-  const origin = req.headers.origin;
+  const h = req.headers || {};
+  if (!LOCAL$1.test(headerString(h.host))) return false;
+  const remoteAddr = req.socket?.remoteAddress;
+  if (remoteAddr && !LOOPBACK_IP$1.test(remoteAddr)) return false;
+  const tc = req.transportContext;
+  if (tc && (tc.transport && tc.transport !== "local" && tc.transport !== "loopback" || tc.peer || tc.guest || tc.scoped)) {
+    return false;
+  }
+  if (headerString(h.forwarded).trim()) return false;
+  if (headerString(h["x-openscout-forwarded-node-id"]).trim()) return false;
+  const xff = headerString(h["x-forwarded-for"]).trim();
+  if (xff) {
+    const hops = xff.split(",").map((s) => s.trim());
+    if (!hops.length || hops.some((ip) => !ip || !LOOPBACK_IP$1.test(ip))) return false;
+  }
+  const realIp = headerString(h["x-real-ip"]).trim();
+  if (realIp && !LOOPBACK_IP$1.test(realIp)) return false;
+  const transport = headerString(h["x-openscout-transport"]).trim().toLowerCase();
+  if (transport && transport !== "local" && transport !== "loopback") return false;
+  if (truthyHeader(h["x-openscout-peer"]) || truthyHeader(h["x-openscout-guest"]) || truthyHeader(h["x-openscout-scoped"])) {
+    return false;
+  }
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    if (headerString(h["sec-fetch-site"]).trim().toLowerCase() === "cross-site") return false;
+  }
+  const origin = headerString(h.origin).trim();
   if (!origin) return true;
   try {
-    return new URL(origin).host === req.headers.host;
+    return new URL(origin).host.toLowerCase() === headerString(h.host).toLowerCase();
   } catch {
     return false;
   }
@@ -4467,6 +5241,7 @@ async function handle(req, res) {
   const img = p.match(/^\/img\/(?:([tm])\/)?([0-9a-f]{16})\.(png|jpg|webp|gif)$/);
   if (img) {
     let file = materialize(img[2], img[3]) || path.join(IMG, `${img[2]}.${img[3]}`);
+    if (!fs.existsSync(file)) file = await materializeRuntimeScreen(img[2], img[3]) || file;
     if (img[1] && fs.existsSync(file)) file = await thumb(file, img[2], img[1]) || file;
     if (!fs.existsSync(file)) {
       send(res, 404, { error: "no such screen" });
@@ -4485,9 +5260,10 @@ async function handle(req, res) {
       const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 4));
       return send(res, 200, await canvas(hours)), true;
     }
-    const sv = p.match(/^\/api\/shows\/([0-9a-f-]{36})\/view$/);
+    const sv = p.match(/^\/api\/shows\/([A-Za-z0-9_-]{1,128})\/view$/);
     if (sv && req.method === "GET") {
-      const localShow = localShowById(sv[1]);
+      const id = sv[1];
+      const localShow = localShowById(id);
       if (localShow) {
         const bytes = localShowBytes(localShow.id);
         if (!bytes) return send(res, 404, { error: "file is no longer available" }), true;
@@ -4496,10 +5272,27 @@ async function handle(req, res) {
         res.end(out2.body);
         return true;
       }
-      let show = showById(sv[1]);
+      let obsShow = observedShowById(id);
+      if (!obsShow) {
+        await observedSurfaces(72 * 36e5);
+        obsShow = observedShowById(id);
+      }
+      if (obsShow) {
+        let bytes;
+        try {
+          bytes = await observedShowBytes(obsShow.id);
+        } catch {
+          return send(res, 404, { error: "surface bytes are no longer available" }), true;
+        }
+        const out2 = viewResponse({ ...obsShow, view: viewOf(obsShow), name: path.basename(obsShow.sourcePath) }, bytes);
+        res.writeHead(out2.status, out2.headers);
+        res.end(out2.body);
+        return true;
+      }
+      let show = showById(id);
       if (!show && url.searchParams.get("root")) {
         await showsFor([url.searchParams.get("root")]);
-        show = showById(sv[1]);
+        show = showById(id);
       }
       if (!show) return send(res, 404, { error: "Scout's runtime has no such shown file" }), true;
       const out = viewResponse({ ...show, view: viewOf(show), name: path.basename(show.sourcePath) }, await showBytes(show.id));
@@ -4552,14 +5345,40 @@ async function handle(req, res) {
   return true;
 }
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
-const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const LOOPBACK_IP = /^(?:127\.\d+\.\d+\.\d+|::1|\[::1\]|::ffff:127\.\d+\.\d+\.\d+)$/i;
+function headerStr(v2) {
+  return Array.isArray(v2) ? v2.join(",") : typeof v2 === "string" ? v2 : "";
+}
+function truthyHdr(v2) {
+  const s = headerStr(v2).trim().toLowerCase();
+  return Boolean(s && s !== "0" && s !== "false" && s !== "no");
+}
 function isLocalRequest(req) {
-  const host = req.headers.host || "";
+  const h = req.headers;
+  const host = headerStr(h.host);
   if (!LOCAL.test(host)) return false;
-  const origin = req.headers.origin;
+  const remoteAddr = req.socket?.remoteAddress;
+  if (remoteAddr && !LOOPBACK_IP.test(remoteAddr)) return false;
+  if (headerStr(h.forwarded).trim() || headerStr(h["x-openscout-forwarded-node-id"]).trim()) return false;
+  const xff = headerStr(h["x-forwarded-for"]).trim();
+  if (xff) {
+    const hops = xff.split(",").map((s) => s.trim());
+    if (!hops.length || hops.some((ip) => !ip || !LOOPBACK_IP.test(ip))) return false;
+  }
+  const realIp = headerStr(h["x-real-ip"]).trim();
+  if (realIp && !LOOPBACK_IP.test(realIp)) return false;
+  const transport = headerStr(h["x-openscout-transport"]).trim().toLowerCase();
+  if (transport && transport !== "local" && transport !== "loopback") return false;
+  if (truthyHdr(h["x-openscout-peer"]) || truthyHdr(h["x-openscout-guest"]) || truthyHdr(h["x-openscout-scoped"])) return false;
+  const method = (req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD" && headerStr(h["sec-fetch-site"]).trim().toLowerCase() === "cross-site") {
+    return false;
+  }
+  const origin = headerStr(h.origin).trim();
   if (!origin) return true;
   try {
-    return new URL(origin).host === host;
+    return new URL(origin).host.toLowerCase() === host.toLowerCase();
   } catch {
     return false;
   }

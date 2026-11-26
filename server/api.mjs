@@ -11,18 +11,71 @@ import { materialize } from "./transcripts.mjs";
 import { canvas } from "./sessions.mjs";
 import { addNote, feedback, handOff, keep, notes, remove, retry, startSweep } from "./notes.mjs";
 import { addPointer, markSeen, pointer, pointersOf, screensOf } from "./pointers.mjs";
-import { showById, showBytes, showsFor, viewOf } from "./runtime.mjs";
+import {
+  materializeRuntimeScreen,
+  observedShowById,
+  observedShowBytes,
+  observedSurfaces,
+  showById,
+  showBytes,
+  showsFor,
+  viewOf,
+} from "./runtime.mjs";
 import { localShowById, localShowBytes } from "./artifacts.mjs";
 import { viewResponse } from "./show-view.mjs";
 import { events } from "./live.mjs";
 
-const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const LOOPBACK_IP = /^(?:127\.\d+\.\d+\.\d+|::1|\[::1\]|::ffff:127\.\d+\.\d+\.\d+)$/i;
+
+function headerString(v) {
+  return Array.isArray(v) ? v.join(",") : typeof v === "string" ? v : "";
+}
+
+function truthyHeader(v) {
+  const s = headerString(v).trim().toLowerCase();
+  return Boolean(s && s !== "0" && s !== "false" && s !== "no");
+}
 
 function local(req) {
-  if (!LOCAL.test(req.headers.host || "")) return false;
-  const origin = req.headers.origin;
+  const h = req.headers || {};
+  if (!LOCAL.test(headerString(h.host))) return false;
+
+  const remoteAddr = req.socket?.remoteAddress;
+  if (remoteAddr && !LOOPBACK_IP.test(remoteAddr)) return false;
+
+  const tc = req.transportContext;
+  if (tc && ((tc.transport && tc.transport !== "local" && tc.transport !== "loopback") || tc.peer || tc.guest || tc.scoped)) {
+    return false;
+  }
+
+  if (headerString(h.forwarded).trim()) return false;
+  if (headerString(h["x-openscout-forwarded-node-id"]).trim()) return false;
+
+  const xff = headerString(h["x-forwarded-for"]).trim();
+  if (xff) {
+    const hops = xff.split(",").map((s) => s.trim());
+    if (!hops.length || hops.some((ip) => !ip || !LOOPBACK_IP.test(ip))) return false;
+  }
+
+  const realIp = headerString(h["x-real-ip"]).trim();
+  if (realIp && !LOOPBACK_IP.test(realIp)) return false;
+
+  const transport = headerString(h["x-openscout-transport"]).trim().toLowerCase();
+  if (transport && transport !== "local" && transport !== "loopback") return false;
+
+  if (truthyHeader(h["x-openscout-peer"]) || truthyHeader(h["x-openscout-guest"]) || truthyHeader(h["x-openscout-scoped"])) {
+    return false;
+  }
+
+  const method = String(req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    if (headerString(h["sec-fetch-site"]).trim().toLowerCase() === "cross-site") return false;
+  }
+
+  const origin = headerString(h.origin).trim();
   if (!origin) return true;
-  try { return new URL(origin).host === req.headers.host; } catch { return false; }
+  try { return new URL(origin).host.toLowerCase() === headerString(h.host).toLowerCase(); } catch { return false; }
 }
 
 const send = (res, code, body) => {
@@ -83,6 +136,7 @@ export async function handle(req, res) {
   const img = p.match(/^\/img\/(?:([tm])\/)?([0-9a-f]{16})\.(png|jpg|webp|gif)$/);
   if (img) {
     let file = materialize(img[2], img[3]) || path.join(IMG, `${img[2]}.${img[3]}`);
+    if (!fs.existsSync(file)) file = (await materializeRuntimeScreen(img[2], img[3])) || file;
     if (img[1] && fs.existsSync(file)) file = (await thumb(file, img[2], img[1])) || file;
     if (!fs.existsSync(file)) { send(res, 404, { error: "no such screen" }); return true; }
     res.writeHead(200, { "content-type": TYPES[path.extname(file).slice(1)], "cache-control": "max-age=31536000, immutable" });
@@ -128,10 +182,11 @@ export async function handle(req, res) {
       const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 4));
       return send(res, 200, await canvas(hours)), true;
     }
-    // a shown file, from the runtime or auto-discovered on disk, made into a page the reader frames
-    const sv = p.match(/^\/api\/shows\/([0-9a-f-]{36})\/view$/);
+    // a surface or shown file, from `/v1/observed-surfaces`, `/v1/shows`, or local fallback, framed safely
+    const sv = p.match(/^\/api\/shows\/([A-Za-z0-9_-]{1,128})\/view$/);
     if (sv && req.method === "GET") {
-      const localShow = localShowById(sv[1]);
+      const id = sv[1];
+      const localShow = localShowById(id);
       if (localShow) {
         const bytes = localShowBytes(localShow.id);
         if (!bytes) return send(res, 404, { error: "file is no longer available" }), true;
@@ -140,8 +195,21 @@ export async function handle(req, res) {
         res.end(out.body);
         return true;
       }
-      let show = showById(sv[1]);
-      if (!show && url.searchParams.get("root")) { await showsFor([url.searchParams.get("root")]); show = showById(sv[1]); }
+      let obsShow = observedShowById(id);
+      if (!obsShow) {
+        await observedSurfaces(72 * 3600e3);
+        obsShow = observedShowById(id);
+      }
+      if (obsShow) {
+        let bytes;
+        try { bytes = await observedShowBytes(obsShow.id); } catch { return send(res, 404, { error: "surface bytes are no longer available" }), true; }
+        const out = viewResponse({ ...obsShow, view: viewOf(obsShow), name: path.basename(obsShow.sourcePath) }, bytes);
+        res.writeHead(out.status, out.headers);
+        res.end(out.body);
+        return true;
+      }
+      let show = showById(id);
+      if (!show && url.searchParams.get("root")) { await showsFor([url.searchParams.get("root")]); show = showById(id); }
       if (!show) return send(res, 404, { error: "Scout's runtime has no such shown file" }), true;
       const out = viewResponse({ ...show, view: viewOf(show), name: path.basename(show.sourcePath) }, await showBytes(show.id));
       res.writeHead(out.status, out.headers);

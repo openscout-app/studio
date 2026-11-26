@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { ago, img, showView, type CanvasData, type Screen, type Session, type Show } from "./api";
+import {
+  ago,
+  img,
+  provenanceLabel,
+  provenanceOfScreen,
+  provenanceOfShow,
+  revisionOf,
+  showView,
+  type CanvasData,
+  type Screen,
+  type Session,
+  type Show,
+  type SurfaceProvenance,
+} from "./api";
 import { docTitle, groupShows } from "./folio";
 
 type LibraryItem =
@@ -11,6 +24,9 @@ type LibraryItem =
       project: string;
       branch: string;
       at: number;
+      provenance: SurfaceProvenance;
+      revision: number;
+      subjectLabel?: string;
       folioId?: string;
       folioTitle?: string;
       folioIndex?: number;
@@ -24,11 +40,16 @@ type LibraryItem =
       project: string;
       branch: string;
       at: number;
+      provenance: SurfaceProvenance;
+      revision: number;
+      subjectLabel?: string;
       screen: Screen;
       session: Session;
     };
 
 export type LibraryFilter = "all" | "docs" | "screens";
+
+const PROVENANCE_ORDER: readonly SurfaceProvenance[] = ["shown", "written", "workspace", "captured"];
 
 export function Library({
   data,
@@ -68,6 +89,9 @@ export function Library({
                 project: p.name,
                 branch: show.branch || s.branch,
                 at: show.at,
+                provenance: provenanceOfShow(show),
+                revision: revisionOf(show),
+                subjectLabel: show.subject?.label,
                 folioId: g.id,
                 folioTitle: g.title,
                 folioIndex: idx + 1,
@@ -79,11 +103,14 @@ export function Library({
             list.push({
               kind: "show",
               id: `show:${show.id}`,
-              title: show.view === "markdown" ? docTitle(show) : show.name,
+              title: show.view === "markdown" ? docTitle(show) : (show.caption || show.name),
               subtitle: show.caption || show.name,
               project: p.name,
               branch: show.branch || s.branch,
               at: show.at,
+              provenance: provenanceOfShow(show),
+              revision: revisionOf(show),
+              subjectLabel: show.subject?.label,
               show,
             });
           }
@@ -97,6 +124,9 @@ export function Library({
             project: p.name,
             branch: s.branch,
             at: sc.at,
+            provenance: provenanceOfScreen(sc),
+            revision: revisionOf(sc),
+            subjectLabel: sc.subject?.label,
             screen: sc,
             session: s,
           });
@@ -122,50 +152,53 @@ export function Library({
       if (filter === "docs" && !(item.kind === "show" && item.show.view !== "image" && item.show.view !== "video")) return false;
       if (filter === "screens" && (item.kind === "show" && item.show.view !== "image" && item.show.view !== "video")) return false;
       if (!q) return true;
-      const hay = `${item.title} ${item.subtitle} ${item.project} ${item.branch} ${item.folioTitle || ""}`.toLowerCase();
+      const folio = item.kind === "show" ? item.folioTitle || "" : "";
+      const hay = `${item.title} ${item.subtitle} ${item.project} ${item.branch} ${folio} ${item.subjectLabel || ""} ${provenanceLabel(item.provenance)} v${item.revision}`.toLowerCase();
       return hay.includes(q);
     });
   }, [items, filter, query]);
 
+  // Group visible surfaces honestly by first-principles provenance (`Shown`, `Written`, `Workspace`, `Captured`)
+  const sections = useMemo(() => {
+    const buckets = new Map<SurfaceProvenance, LibraryItem[]>();
+    for (const item of visible) {
+      const list = buckets.get(item.provenance);
+      if (list) list.push(item);
+      else buckets.set(item.provenance, [item]);
+    }
+    return PROVENANCE_ORDER
+      .filter((prov) => (buckets.get(prov)?.length ?? 0) > 0)
+      .map((prov) => ({
+        key: prov,
+        provenance: prov,
+        title: provenanceLabel(prov),
+        items: buckets.get(prov)!.slice().sort((a, b) => b.at - a.at),
+      }));
+  }, [visible]);
+
+  const orderedVisible = useMemo(() => sections.flatMap((sec) => sec.items), [sections]);
+
   const selected = useMemo(
-    () => visible.find((i) => i.id === selectedId) ?? visible[0] ?? null,
-    [visible, selectedId],
+    () => orderedVisible.find((i) => i.id === selectedId) ?? orderedVisible[0] ?? null,
+    [orderedVisible, selectedId],
   );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || !visible.length) return;
-      const idx = selected ? visible.findIndex((i) => i.id === selected.id) : 0;
+      if (tag === "INPUT" || tag === "TEXTAREA" || !orderedVisible.length) return;
+      const idx = selected ? orderedVisible.findIndex((i) => i.id === selected.id) : 0;
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault();
-        setSelectedId(visible[(idx + 1) % visible.length].id);
+        setSelectedId(orderedVisible[(idx + 1) % orderedVisible.length].id);
       } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault();
-        setSelectedId(visible[(idx - 1 + visible.length) % visible.length].id);
+        setSelectedId(orderedVisible[(idx - 1 + orderedVisible.length) % orderedVisible.length].id);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [visible, selected]);
-
-  // Group visible items by folio (preserving order) or "Standalone"
-  const sections = useMemo(() => {
-    const map = new Map<string, { key: string; title: string; items: LibraryItem[] }>();
-    for (const item of visible) {
-      const key = item.kind === "show" && item.folioId ? item.folioId : item.kind === "show" ? "shows" : "screens";
-      const title =
-        item.kind === "show" && item.folioTitle
-          ? item.folioTitle
-          : item.kind === "show"
-            ? "Shown documents"
-            : "Screens";
-      const existing = map.get(key);
-      if (existing) existing.items.push(item);
-      else map.set(key, { key, title, items: [item] });
-    }
-    return [...map.values()];
-  }, [visible]);
+  }, [orderedVisible, selected]);
 
   const copyAskCommand = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -204,13 +237,16 @@ export function Library({
         <div className="library-list">
           {sections.length === 0 ? (
             <div className="library-empty-rail">
-              {data ? "No artifacts match this filter." : "Loading library…"}
+              {data ? "No surfaces match this filter." : "Loading library…"}
             </div>
           ) : (
             sections.map((sec) => (
-              <section key={sec.key} className="library-group">
+              <section key={sec.key} className="library-group" data-provenance={sec.provenance}>
                 <header className="library-group-head">
-                  <span>{sec.title}</span>
+                  <span className="library-group-label">
+                    <span className="library-prov-dot" data-provenance={sec.provenance} />
+                    <span>{sec.title}</span>
+                  </span>
                   <span className="library-group-count">{sec.items.length}</span>
                 </header>
                 {sec.items.map((item) => {
@@ -223,15 +259,21 @@ export function Library({
                       aria-current={active ? "page" : undefined}
                       onClick={() => setSelectedId(item.id)}
                     >
-                      {item.kind === "show" && item.folioIndex ? (
-                        <span className="library-num">{String(item.folioIndex).padStart(2, "0")}</span>
-                      ) : (
-                        <span className="library-kind-dot" data-kind={item.kind} />
-                      )}
+                      <span className="library-kind-dot" data-kind={item.kind} data-provenance={item.provenance} />
                       <span className="library-row-main">
-                        <span className="library-row-title">{item.title}</span>
+                        <span className="library-row-top">
+                          <span className="library-row-title">{item.title}</span>
+                          {item.revision > 1 ? (
+                            <span className="library-rev-badge" title={`Revision ${item.revision}`}>
+                              v{item.revision}
+                            </span>
+                          ) : null}
+                        </span>
                         <span className="library-row-meta">
-                          <span>{item.project}</span>
+                          <span className="library-row-sub">
+                            {item.project}
+                            {item.kind === "show" && item.folioTitle ? ` · ${item.folioTitle}` : ""}
+                          </span>
                           <span>{ago(item.at)}</span>
                         </span>
                       </span>
@@ -248,13 +290,21 @@ export function Library({
         {!selected ? (
           <div className="library-empty-stage">
             <h2>Library</h2>
-            <p>Shown documents, folios, and screens from your agents appear here as a browsable collection.</p>
+            <p>Shown, written, workspace, and captured surfaces from your agents appear here with revision history.</p>
           </div>
         ) : (
           <>
             <header className="library-head">
               <div className="library-head-copy">
                 <h1>{selected.title}</h1>
+                <span className="surface-prov-badge" data-provenance={selected.provenance}>
+                  {provenanceLabel(selected.provenance)}
+                </span>
+                {selected.revision > 1 ? (
+                  <span className="surface-rev-badge" title={`Revision ${selected.revision}`}>
+                    v{selected.revision}
+                  </span>
+                ) : null}
                 <span className="library-head-meta">
                   {selected.project}
                   {selected.branch ? ` · ${selected.branch}` : ""}

@@ -14,15 +14,43 @@ import { handle as handleStudioApi } from "../server/api.mjs";
 
 export const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 
-const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const LOOPBACK_IP = /^(?:127\.\d+\.\d+\.\d+|::1|\[::1\]|::ffff:127\.\d+\.\d+\.\d+)$/i;
+
+function headerStr(v: string | string[] | undefined): string {
+  return Array.isArray(v) ? v.join(",") : typeof v === "string" ? v : "";
+}
+
+function truthyHdr(v: string | string[] | undefined): boolean {
+  const s = headerStr(v).trim().toLowerCase();
+  return Boolean(s && s !== "0" && s !== "false" && s !== "no");
+}
 
 function isLocalRequest(req: http.IncomingMessage): boolean {
-  const host = req.headers.host || "";
+  const h = req.headers;
+  const host = headerStr(h.host);
   if (!LOCAL.test(host)) return false;
-  const origin = req.headers.origin;
+  const remoteAddr = req.socket?.remoteAddress;
+  if (remoteAddr && !LOOPBACK_IP.test(remoteAddr)) return false;
+  if (headerStr(h.forwarded).trim() || headerStr(h["x-openscout-forwarded-node-id"]).trim()) return false;
+  const xff = headerStr(h["x-forwarded-for"]).trim();
+  if (xff) {
+    const hops = xff.split(",").map((s) => s.trim());
+    if (!hops.length || hops.some((ip) => !ip || !LOOPBACK_IP.test(ip))) return false;
+  }
+  const realIp = headerStr(h["x-real-ip"]).trim();
+  if (realIp && !LOOPBACK_IP.test(realIp)) return false;
+  const transport = headerStr(h["x-openscout-transport"]).trim().toLowerCase();
+  if (transport && transport !== "local" && transport !== "loopback") return false;
+  if (truthyHdr(h["x-openscout-peer"]) || truthyHdr(h["x-openscout-guest"]) || truthyHdr(h["x-openscout-scoped"])) return false;
+  const method = (req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD" && headerStr(h["sec-fetch-site"]).trim().toLowerCase() === "cross-site") {
+    return false;
+  }
+  const origin = headerStr(h.origin).trim();
   if (!origin) return true;
   try {
-    return new URL(origin).host === host;
+    return new URL(origin).host.toLowerCase() === host.toLowerCase();
   } catch {
     return false;
   }
