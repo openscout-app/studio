@@ -51,6 +51,15 @@ const known = new Map();  // show id -> show, for the routes that serve one
  * canvas asks every few seconds. Empty when the runtime doesn't answer. */
 export async function showsFor(roots) {
   const out = [];
+  const globalHit = listed.get("*");
+  if (globalHit && Date.now() - globalHit.at < 8e3) {
+    out.push(...globalHit.shows);
+  } else {
+    let globalShows = [];
+    try { globalShows = (await (await get("/v1/shows")).json()).shows || []; } catch {}
+    listed.set("*", { at: Date.now(), shows: globalShows });
+    out.push(...globalShows);
+  }
   await Promise.all([...new Set(roots.filter(Boolean))].map(async (root) => {
     const hit = listed.get(root);
     if (hit && Date.now() - hit.at < (following.has(root) ? 300e3 : 8e3)) return out.push(...hit.shows);

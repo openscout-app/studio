@@ -14,10 +14,15 @@ export function Glyph({ className }: { className?: string }) {
 }
 
 /** How far back: a short look by default; the canvas widens on its own when there's nothing in it */
-export const WINDOWS = [{ h: 4, label: "4 hours" }, { h: 24, label: "24 hours" }, { h: 72, label: "3 days" }];
+export const WINDOWS = [
+  { h: 4, label: "4 hours" },
+  { h: 24, label: "24 hours" },
+  { h: 72, label: "3 days" },
+  { h: 336, label: "14 days" },
+];
 export const START_HOURS = 4;
-/** The next window out, for an empty canvas or a link to an older session; a link may go as far as a week */
-export const wider = (h: number) => (h < 24 ? 24 : h < 72 ? 72 : 168);
+/** The next window out, for an empty canvas or a link to an older session */
+export const wider = (h: number) => (h < 24 ? 24 : h < 72 ? 72 : 336);
 export type Filter = "all" | "notes" | "changed";
 export type AgentMode = "all" | "open" | "working";
 export type View = { hiddenProjects: string[]; hiddenSessions: string[]; agents: AgentMode };

@@ -2,6 +2,8 @@
 // grouped by the repository it worked in, with what Scout and Claude know about it right now.
 import { sharedInWindow } from "./shared-screens.mjs";
 import { codexFiles } from "./codex.mjs";
+import { antigravityBrainAssets, classifyTranscriptFile, extraHarnessFiles } from "./harnesses.mjs";
+import { discoverWorkspaceArtifacts } from "./artifacts.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -81,9 +83,9 @@ function branchOf(cwd) {
   return v;
 }
 
-/** Every transcript written in the window: a session's own, and its subagents' under it. */
+/** Every transcript written in the window: Claude, Codex, Antigravity, Kimi, and subagents. */
 function transcriptsSince(since) {
-  const out = codexFiles(since);
+  const out = [...codexFiles(since), ...extraHarnessFiles(since)];
   let dirs = [];
   try { dirs = fs.readdirSync(CLAUDE_PROJECTS); } catch { return out; }
   for (const d of dirs) {
@@ -93,14 +95,14 @@ function transcriptsSince(since) {
     for (const n of names) {
       const p = path.join(base, n);
       if (n.endsWith(".jsonl")) {
-        try { const st = fs.statSync(p); if (st.mtimeMs >= since) out.push({ file: p, session: n.slice(0, -6), mtime: st.mtimeMs, size: st.size }); } catch {}
+        try { const st = fs.statSync(p); if (st.mtimeMs >= since) out.push({ file: p, session: n.slice(0, -6), harness: "claude", mtime: st.mtimeMs, size: st.size }); } catch {}
       } else if (!n.includes(".")) {
         const sub = path.join(p, "subagents");
         let subs = [];
         try { subs = fs.readdirSync(sub).filter((x) => x.endsWith(".jsonl")); } catch { continue; }
         for (const x of subs) {
           const f = path.join(sub, x);
-          try { const st = fs.statSync(f); if (st.mtimeMs >= since) out.push({ file: f, session: n, subagent: true, mtime: st.mtimeMs, size: st.size }); } catch {}
+          try { const st = fs.statSync(f); if (st.mtimeMs >= since) out.push({ file: f, session: n, harness: "claude", subagent: true, mtime: st.mtimeMs, size: st.size }); } catch {}
         }
       }
     }
@@ -108,21 +110,18 @@ function transcriptsSince(since) {
   return out;
 }
 
-// ---- reading in the background, newest first
-//
-// A load lists the window's transcripts, newest first, and reads them one after another. The
-// canvas is drawn from whatever has been read so far, so the latest session shows within a moment
-// and the rest arrive behind it. Once a load is done, the next ask for the canvas starts a fresh
-// one, which costs little: each transcript is read only from where it stopped.
+const MAX_LONG_WINDOW_FILES = 80;
+
 const loads = new Map(); // hours -> load
 function load(hours) {
   const was = loads.get(hours);
   if (was && (!was.done || Date.now() - was.endedAt < 10e3)) return was;
-  const files = transcriptsSince(Date.now() - hours * 3600e3).sort((a, b) => b.mtime - a.mtime);
+  let files = transcriptsSince(Date.now() - hours * 3600e3).sort((a, b) => b.mtime - a.mtime);
+  if (hours > 72 && files.length > MAX_LONG_WINDOW_FILES) files = files.slice(0, MAX_LONG_WINDOW_FILES);
   const l = { files, done: false, endedAt: 0, first: !was, start: new Map(files.map((t) => [t.file, parsed(t.file)?.offset || 0])) };
   loads.set(hours, l);
   (async () => {
-    for (const t of files) await readTranscript(t.file, t.session).catch(() => null);
+    for (const t of files) await readTranscript(t.file, t.session, t).catch(() => null);
     l.done = true;
     l.endedAt = Date.now();
   })();
@@ -154,8 +153,21 @@ export async function canvas(hours = 4) {
   // the repositories to ask the runtime about: those of Claude's transcripts here, and those of every
   // session the runtime sees at work in the window (Codex, relayed asks), most recent first
   const seen = new Map();
-  for (const rec of bySession.values()) { const s = rec.own || rec.parts[0]; if (s?.cwd) seen.set(s.cwd, Math.max(seen.get(s.cwd) || 0, s.lastAt || 0)); }
-  for (const t of disc.byId.values()) if (t.cwd && (t.lastEventAt || 0) >= since) seen.set(t.cwd, Math.max(seen.get(t.cwd) || 0, t.lastEventAt));
+  const cwdBySession = new Map();
+  for (const rec of bySession.values()) {
+    const s = rec.own || rec.parts[0];
+    if (s?.cwd) {
+      seen.set(s.cwd, Math.max(seen.get(s.cwd) || 0, s.lastAt || 0));
+      cwdBySession.set(rec.id, s.cwd);
+    }
+  }
+  for (const t of disc.byId.values()) {
+    if (t.cwd) {
+      if (t.sessionId && !cwdBySession.has(t.sessionId)) cwdBySession.set(t.sessionId, t.cwd);
+      const evtAt = t.lastEventAt || t.mtimeMs || 0;
+      if (evtAt >= since) seen.set(t.cwd, Math.max(seen.get(t.cwd) || 0, evtAt));
+    }
+  }
   const latestFor = new Map();
   for (const [cwd, at] of seen) { const r = repoOf(cwd).root; if (r) latestFor.set(r, Math.max(latestFor.get(r) || 0, at)); }
   const roots = [...latestFor].sort((a, b) => b[1] - a[1]).map(([r]) => r).slice(0, FOLLOW);
@@ -163,34 +175,114 @@ export async function canvas(hours = 4) {
   if (disc.up) watchShows(roots);
   const showsBy = new Map();
   for (const sh of shows) showsBy.set(sh.sessionId, [...(showsBy.get(sh.sessionId) || []), sh]);
+
+  // Antigravity brain scratch images and markdown/HTML artifacts
+  const brainBySession = new Map();
+  for (const b of antigravityBrainAssets(since, cwdBySession)) brainBySession.set(b.session, b);
+
   const projects = new Map();
   for (const rec of bySession.values()) {
     const all = [rec.own, ...rec.parts].filter(Boolean);
-    const screens = all.flatMap(screensOf).filter((sc) => sc.at >= since).sort((a, b) => a.at - b.at);
-    const shown = showsBy.get(rec.id) || [];
+    const brain = brainBySession.get(rec.id);
+    brainBySession.delete(rec.id);
+    const written = [];
+    const seenShowPaths = new Set();
+    for (const s of all) {
+      for (const sh of s.writtenShows?.values() || []) {
+        if (sh.at >= since && !seenShowPaths.has(sh.path)) {
+          seenShowPaths.add(sh.path);
+          written.push(sh);
+        }
+      }
+    }
+    if (brain?.shows) {
+      for (const sh of brain.shows) {
+        if (!seenShowPaths.has(sh.path)) {
+          seenShowPaths.add(sh.path);
+          written.push(sh);
+        }
+      }
+    }
+    const runtimeShown = showsBy.get(rec.id) || [];
     showsBy.delete(rec.id);
-    if (!screens.length && !shown.length) continue;
+    for (const sh of runtimeShown) seenShowPaths.add(sh.path);
+    const shown = [...runtimeShown, ...written.filter((w) => !runtimeShown.some((r) => r.path === w.path))]
+      .sort((a, b) => b.at - a.at);
+
+    const rawScreens = [
+      ...all.flatMap(screensOf).filter((sc) => sc.at >= since),
+      ...(brain?.screens || []),
+    ];
+    const dedupScreens = [];
+    const seenHashes = new Set();
+    for (const sc of rawScreens.sort((a, b) => a.at - b.at)) {
+      if (seenHashes.has(sc.hash)) continue;
+      seenHashes.add(sc.hash);
+      dedupScreens.push(sc);
+    }
+    if (!dedupScreens.length && !shown.length) continue;
     const own = rec.own || all[0];
-    const cwd = own.cwd || all.find((s) => s.cwd)?.cwd || "";
     const d = disc.byId.get(rec.id) || {};
+    const cwd = own.cwd || all.find((s) => s.cwd)?.cwd || d.cwd || brain?.cwd || "";
     const o = open.get(rec.id);
-    const lastAt = Math.max(...all.map((s) => s.lastAt || 0));
+    const lastAt = Math.max(
+      ...all.map((s) => s.lastAt || 0),
+      ...dedupScreens.map((sc) => sc.at || 0),
+      ...shown.map((sh) => sh.at || 0),
+    );
     const working = !!o && (o.status === "busy" || (Date.now() - lastAt < WORKING_MS && (own.lastStop !== "end_turn" || own.openTools > 0)));
-    const repo = repoOf(cwd);
+    const repo = repoOf(cwd || brain?.brainDir || "");
+    const branch = branchOf(cwd);
+    for (const sh of shown) {
+      if (sh.local) {
+        sh.projectRoot = repo.root || sh.projectRoot;
+        sh.worktree = cwd || sh.worktree;
+        sh.branch = branch || sh.branch;
+      }
+    }
     const session = {
-      id: rec.id, harness: own.harness || "claude", cwd, branch: branchOf(cwd),
+      id: rec.id, harness: own.harness || d.source || "claude", cwd, branch,
       // Claude's own title first; Scout's relay names (session-…-relay-agent) say nothing to a person
       // and a title that is only Scout's delivery wrapping says nothing either: the task says more
-      title: [d.customTitle, d.aiTitle, d.title, o?.name, d.sessionName].find((t) => t && !/^session-[a-z0-9]+-[a-z0-9]+/.test(t) && !isWrapped(t)) || own.prompt.slice(0, 80) || rec.id.slice(0, 8),
-      prompt: own.prompt, firstAt: own.firstAt, lastAt,
+      title: [d.customTitle, d.aiTitle, d.title, d.harnessTitle, o?.name, d.sessionName].find((t) => t && !/^session-[a-z0-9]+-[a-z0-9]+/.test(t) && !isWrapped(t)) || own.prompt.slice(0, 80) || rec.id.slice(0, 8),
+      prompt: own.prompt, firstAt: own.firstAt || lastAt, lastAt,
       open: !!o, working, attention: d.attention || d.waitingFor || null,
       // what it did last, from it or one of its subagents, whichever was later
       now: all.map((s) => s.now).filter(Boolean).sort((a, b) => b.at - a.at)[0]?.text || null,
-      screens: screens.map((sc) => ({
+      screens: dedupScreens.map((sc) => ({
         id: `${rec.id}:${sc.hash}`, hash: sc.hash, ext: sc.ext, w: sc.w, h: sc.h, at: sc.at,
-        tool: sc.tool, url: sc.url, file: sc.file, caption: sc.caption, before: sc.before || null, open: !!sc.open,
+        tool: sc.tool, url: sc.url, file: sc.file, caption: sc.caption || "", before: sc.before || null, open: !!sc.open,
       })),
       shows: shown,
+    };
+    if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
+    projects.get(repo.root).sessions.push(session);
+  }
+
+  // Remaining Antigravity brain folders whose transcript wasn't in `bySession` yet
+  for (const [, brain] of brainBySession) {
+    const repo = repoOf(brain.cwd || brain.brainDir);
+    const branch = branchOf(brain.cwd);
+    const allAt = [...brain.screens.map((s) => s.at), ...brain.shows.map((s) => s.at)];
+    const session = {
+      id: brain.session,
+      harness: "antigravity",
+      cwd: brain.cwd || brain.brainDir,
+      branch,
+      title: brain.shows[0]?.caption || `Antigravity · ${repo.name}`,
+      prompt: "",
+      firstAt: Math.min(...allAt),
+      lastAt: Math.max(...allAt),
+      open: false,
+      working: false,
+      attention: null,
+      now: null,
+      screens: brain.screens.map((sc) => ({
+        id: `${brain.session}:${sc.hash}`,
+        hash: sc.hash, ext: sc.ext, w: sc.w, h: sc.h, at: sc.at,
+        tool: sc.tool, url: sc.url, file: sc.file, caption: sc.caption || "", before: null, open: false,
+      })),
+      shows: brain.shows,
     };
     if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
     projects.get(repo.root).sessions.push(session);
@@ -225,6 +317,47 @@ export async function canvas(hours = 4) {
     if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
     projects.get(repo.root).sessions.push(session);
   }
+  // Workspace visual studies, plans and scratch screenshots in active repositories
+  for (const ws of discoverWorkspaceArtifacts(roots, since)) {
+    const repo = repoOf(ws.root);
+    const existingGroup = projects.get(repo.root);
+    const claimedPaths = new Set(
+      (existingGroup?.sessions || []).flatMap((s) => [
+        ...(s.shows || []).map((sh) => sh.path),
+        ...(s.screens || []).map((sc) => sc.file).filter(Boolean),
+      ]),
+    );
+    const unclaimedShows = ws.shows.filter((sh) => !claimedPaths.has(sh.path));
+    const unclaimedScreens = ws.screens.filter((sc) => !claimedPaths.has(sc.file));
+    if (!unclaimedShows.length && !unclaimedScreens.length) continue;
+    const branch = branchOf(ws.root);
+    for (const sh of unclaimedShows) sh.branch = branch || sh.branch;
+    const wsId = `workspace:${repo.name}`;
+    const allAt = [...unclaimedShows.map((s) => s.at), ...unclaimedScreens.map((s) => s.at)];
+    const wsSession = {
+      id: wsId,
+      harness: "scout",
+      cwd: ws.root,
+      branch,
+      title: `Workspace · ${repo.name}`,
+      prompt: "",
+      firstAt: Math.min(...allAt),
+      lastAt: Math.max(...allAt),
+      open: false,
+      working: false,
+      attention: null,
+      now: null,
+      screens: unclaimedScreens.map((sc) => ({
+        id: `${wsId}:${sc.hash}`,
+        hash: sc.hash, ext: sc.ext, w: sc.w, h: sc.h, at: sc.at,
+        tool: sc.tool, url: null, file: sc.file, caption: sc.caption || "", before: null, open: false,
+      })),
+      shows: unclaimedShows,
+    };
+    if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
+    projects.get(repo.root).sessions.push(wsSession);
+  }
+
   const list = [...projects.values()];
   for (const p of list) p.sessions.sort((a, b) => b.lastAt - a.lastAt);
   list.sort((a, b) => b.sessions[0].lastAt - a.sessions[0].lastAt);
@@ -279,30 +412,30 @@ function merge(old, fresh, partial) {
 
 /** A transcript changed on disk: read what it added, and put it in every window being read. */
 export async function touch(file) {
-  const rel = path.relative(CLAUDE_PROJECTS, file).split(path.sep);
-  if (rel.length !== 2 && !(rel.length === 4 && rel[2] === "subagents")) return;
-  const subagent = rel.length === 4;
-  const session = subagent ? rel[1] : rel[1].replace(/\.jsonl$/, "");
+  const meta = classifyTranscriptFile(file);
+  if (!meta) return;
   let st;
   try { st = fs.statSync(file); } catch { return; }
   for (const l of loads.values()) {
     if (l.files.some((t) => t.file === file)) continue;
-    l.files.unshift({ file, session, subagent, mtime: st.mtimeMs, size: st.size });
+    l.files.unshift({ file, ...meta, mtime: st.mtimeMs, size: st.size });
     l.start.set(file, 0);
   }
-  await readTranscript(file, session).catch(() => null);
+  await readTranscript(file, meta.session, meta).catch(() => null);
 }
 
 /** The parse state of a session's own transcript, read up to now, for the answers to notes sent into it. */
 export async function stateOf(sessionId) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(sessionId)) return null;
   const codex = codexFiles(0, sessionId)[0];
-  if (codex) return readTranscript(codex.file, sessionId);
+  if (codex) return readTranscript(codex.file, sessionId, codex);
+  const extra = extraHarnessFiles(0, sessionId)[0];
+  if (extra) return readTranscript(extra.file, sessionId, extra);
   let dirs = [];
   try { dirs = fs.readdirSync(CLAUDE_PROJECTS); } catch { return null; }
   for (const d of dirs) {
     const f = path.join(CLAUDE_PROJECTS, d, `${sessionId}.jsonl`);
-    if (fs.existsSync(f)) return readTranscript(f, sessionId);
+    if (fs.existsSync(f)) return readTranscript(f, sessionId, { harness: "claude" });
   }
   return null;
 }

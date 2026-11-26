@@ -932,7 +932,7 @@ function onPath(name) {
 }
 const CODEX_SESSIONS = path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "sessions");
 const uuid = /-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$/i;
-function entries(dir) {
+function entries$1(dir) {
   try {
     return fs.readdirSync(dir, { withFileTypes: true });
   } catch {
@@ -940,19 +940,19 @@ function entries(dir) {
   }
 }
 const known$1 = /* @__PURE__ */ new Map();
-function codexFiles(since = 0, thread = null) {
+function codexFilesIn(rootDir, since = 0, thread = null) {
   if (thread && !uuid.test("-" + thread + ".jsonl")) return [];
   const cached = thread && known$1.get(thread);
   if (cached && fs.existsSync(cached.file)) return [cached];
   const out = [];
-  for (const y2 of entries(CODEX_SESSIONS)) {
+  for (const y2 of entries$1(rootDir)) {
     if (!y2.isDirectory() || !/^\d{4}$/.test(y2.name)) continue;
-    for (const m2 of entries(path.join(CODEX_SESSIONS, y2.name))) {
+    for (const m2 of entries$1(path.join(rootDir, y2.name))) {
       if (!m2.isDirectory() || !/^\d{2}$/.test(m2.name)) continue;
-      for (const d of entries(path.join(CODEX_SESSIONS, y2.name, m2.name))) {
+      for (const d of entries$1(path.join(rootDir, y2.name, m2.name))) {
         if (!d.isDirectory() || !/^\d{2}$/.test(d.name)) continue;
-        const dir = path.join(CODEX_SESSIONS, y2.name, m2.name, d.name);
-        for (const ent of entries(dir)) {
+        const dir = path.join(rootDir, y2.name, m2.name, d.name);
+        for (const ent of entries$1(dir)) {
           const id = ent.name.match(uuid)?.[1];
           if (!id || !ent.isFile() || thread && id !== thread) continue;
           const file = path.join(dir, ent.name);
@@ -972,6 +972,9 @@ function codexFiles(since = 0, thread = null) {
   }
   return out;
 }
+function codexFiles(since = 0, thread = null) {
+  return codexFilesIn(CODEX_SESSIONS, since, thread);
+}
 function codexEntry(entry) {
   const p = entry.payload || {}, timestamp = entry.timestamp;
   if (entry.type === "session_meta" || entry.type === "turn_context") return { timestamp, cwd: p.cwd };
@@ -981,50 +984,40 @@ function codexEntry(entry) {
     const content2 = (Array.isArray(p.content) ? p.content : []).filter((b2) => ["input_text", "output_text"].includes(b2.type)).map((b2) => ({ type: "text", text: b2.text }));
     return { timestamp, type: p.role, message: { content: content2 } };
   }
-  if (p.type === "function_call" || p.type === "custom_tool_call") {
+  if (p.type === "function_call" || p.type === "custom_tool_call" || p.type === "local_shell_call") {
     let input = {};
-    try {
-      input = JSON.parse(p.arguments || "{}") || {};
-    } catch {
+    if (typeof p.arguments === "string") {
+      try {
+        input = JSON.parse(p.arguments || "{}") || {};
+      } catch {
+        input = { raw: p.arguments };
+      }
+    } else if (typeof p.input === "string") {
+      input = { patch: p.input };
+    } else if (Array.isArray(p.command)) {
+      input = { command: p.command.join(" ") };
+    } else if (typeof p.command === "string") {
+      input = { command: p.command };
     }
-    return { timestamp, type: "assistant", message: { content: [{ type: "tool_use", id: p.call_id, name: p.name, input }] } };
+    return {
+      timestamp,
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: p.call_id || "codex_tc", name: p.name || "shell", input, rawPatch: typeof p.input === "string" ? p.input : "" }] }
+    };
   }
   if (p.type !== "function_call_output" && p.type !== "custom_tool_call_output") return null;
   const content = [];
-  for (const b2 of Array.isArray(p.output) ? p.output : []) {
-    if (b2.type === "input_text" || b2.type === "text") content.push({ type: "text", text: b2.text });
-    const uri = b2.image_url?.url || b2.image_url;
-    const match = typeof uri === "string" && uri.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,/);
-    if (match) content.push({ type: "image", source: { type: "base64", media_type: match[1], data: uri.slice(match[0].length) } });
+  if (typeof p.output === "string") {
+    content.push({ type: "text", text: p.output });
+  } else {
+    for (const b2 of Array.isArray(p.output) ? p.output : []) {
+      if (b2.type === "input_text" || b2.type === "text") content.push({ type: "text", text: b2.text });
+      const uri = b2.image_url?.url || b2.image_url;
+      const match = typeof uri === "string" && uri.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,/);
+      if (match) content.push({ type: "image", source: { type: "base64", media_type: match[1], data: uri.slice(match[0].length) } });
+    }
   }
-  return { timestamp, type: "user", message: { content: [{ type: "tool_result", tool_use_id: p.call_id, content }] } };
-}
-const clip = (s, n) => {
-  s = String(s || "").replace(/\s+/g, " ").trim();
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
-};
-const bare = (url) => String(url || "").replace(/^https?:\/\//, "");
-function describe(name = "", input = {}) {
-  const file = input.file_path || input.notebook_path || "";
-  const base = file ? path.basename(file) : "";
-  if (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(name) && base) return `Edited ${base}`;
-  if (name === "Read" && base) return `Read ${base}`;
-  if (name === "Grep" || name === "Glob") return `Searched ${clip(input.pattern, 48)}`;
-  if (name === "Bash") {
-    return clip(input.description, 64) || clip(String(input.command || "").replace(/^cd\s+\S+\s*&&\s*/, ""), 64) || "Ran a command";
-  }
-  if (name === "Agent" || name === "Task") return `Started an agent: ${clip(input.description || input.subagent_type, 48)}`.replace(/: $/, "");
-  if (name === "WebFetch" || name === "WebSearch") return `Looked up ${clip(bare(input.url || input.query), 40)}`;
-  if (name === "TodoWrite" || name === "TaskCreate" || name === "TaskUpdate") return "Updated its tasks";
-  if (/^mcp__\w+__browser_/.test(name)) {
-    return clip(`${name.replace(/^mcp__\w+__browser_/, "Browser ").replace(/_/g, " ")} ${clip(bare(input.url), 40)}`, 64);
-  }
-  if (/^mcp__scout__(ask|reply|session_send|messages_)/.test(name)) return "Messaged an agent";
-  return clip(name.replace(/^mcp__\w+__/, "").replace(/_/g, " "), 40) || "Working";
-}
-function said(text) {
-  const line = String(text || "").split("\n").map((l) => l.replace(/^[#>*\-\s]+/, "").replace(/[*_`]/g, "").trim()).find(Boolean) || "";
-  return clip(line, 64);
+  return { timestamp, type: "user", message: { content: [{ type: "tool_result", tool_use_id: p.call_id || "codex_tc", content }] } };
 }
 function imageSize(b2) {
   if (!b2 || b2.length < 24) return null;
@@ -1058,1100 +1051,6 @@ function imageSize(b2) {
     }
   }
   return null;
-}
-const MIN_W = 320, MIN_H = 200;
-const MARK = /\[scout-(?:studio|canvas):(n_[a-z0-9]+)\]/g;
-const states = /* @__PURE__ */ new Map();
-const places = /* @__PURE__ */ new Map();
-function fresh(file, owner) {
-  return {
-    file,
-    owner,
-    offset: 0,
-    carry: Buffer.alloc(0),
-    line: null,
-    cwd: "",
-    firstAt: 0,
-    lastAt: 0,
-    lastStop: "",
-    openTools: 0,
-    prompt: "",
-    turn: 0,
-    said: "",
-    uses: /* @__PURE__ */ new Map(),
-    screens: [],
-    turnScreens: [],
-    lastOf: /* @__PURE__ */ new Map(),
-    mark: null,
-    arrived: {},
-    answers: {},
-    // what it did last, in a few words, and when
-    now: null
-  };
-}
-function subjectOf(tool, input = {}, text = "") {
-  const url = text.match(/"url"\s*:\s*"([^"]+)"/)?.[1] || input.url;
-  if (url) {
-    try {
-      const u3 = new URL(url);
-      return `page:${u3.host}${u3.pathname.replace(/\/$/, "")}`;
-    } catch {
-    }
-  }
-  if (input.wid != null) return `window:${input.wid}`;
-  const file = input.file_path || input.outputPath || input.path;
-  if (typeof file === "string" && /\.(png|jpe?g|webp|gif)$/i.test(file)) {
-    const stem = path.basename(file).replace(/\.[a-z]+$/i, "").replace(/([-_. ]?(before|after|old|new|v?\d+))+$/i, "");
-    return `file:${path.dirname(file)}/${stem || path.basename(file)}`;
-  }
-  return null;
-}
-const sameShape = (a, b2) => Math.abs(a.w / a.h - b2.w / b2.h) / (b2.w / b2.h) < 0.12;
-function textOf(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.filter((b2) => b2?.type === "text").map((b2) => b2.text).join("\n");
-}
-function plain(text) {
-  return text.replace(/<(system-reminder|command-[a-z-]+|local-command-[a-z-]+)[^>]*>[\s\S]*?<\/\1>/g, " ").replace(/<\/?[a-z_][\w-]*(\s[^>]*)?>/gi, " ").replace(/\s+/g, " ").trim();
-}
-const WRAPPED = /^New (?:broker )?(?:ask|message) from \S+\s+(?:Task|Message):\s*/;
-const isWrapped = (text) => WRAPPED.test(text || "");
-function asked(text) {
-  if (!isWrapped(text)) return text;
-  return text.replace(WRAPPED, "").replace(/\s*Follow the OpenScout collaboration contract:[\s\S]*$/, "").trim();
-}
-function prose(text) {
-  return (text || "").replace(/```[\s\S]*?```/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/(\*\*|__)(.+?)\1/g, "$2").replace(/(^|[\s(])[*_]([^*_\s][^*_]*?)[*_](?=[\s).,;:!?]|$)/g, "$1$2").replace(/`([^`]+)`/g, "$1").replace(/^\s{0,3}(#{1,6}\s+|[-*+]\s+|>\s?)/gm, "").replace(/\s+/g, " ").trim();
-}
-const hashOf = (b64) => crypto.createHash("sha1").update(b64).digest("hex").slice(0, 16);
-const extOf = (media) => media === "image/jpeg" ? "jpg" : media === "image/webp" ? "webp" : media === "image/gif" ? "gif" : "png";
-function noteImage(s, b64, media) {
-  const hash = hashOf(b64);
-  const ext = extOf(media);
-  const size = imageSize(Buffer.from(b64.slice(0, 1 << 18), "base64")) || imageSize(Buffer.from(b64, "base64"));
-  if (!size) return null;
-  if (!places.has(hash) && s.line) places.set(hash, { file: s.file, at: s.line.at, len: s.line.len, ext });
-  return { hash, ext, ...size };
-}
-function materialize(hash, ext) {
-  const out = path.join(IMG, `${hash}.${ext}`);
-  if (fs.existsSync(out)) return out;
-  const p = places.get(hash);
-  if (!p) return null;
-  let entry;
-  try {
-    const fd = fs.openSync(p.file, "r");
-    const buf = Buffer.alloc(p.len);
-    try {
-      fs.readSync(fd, buf, 0, p.len, p.at);
-    } finally {
-      fs.closeSync(fd);
-    }
-    entry = JSON.parse(buf.toString("utf8"));
-  } catch {
-    return null;
-  }
-  if (entry.type === "response_item") entry = codexEntry(entry);
-  for (const r of Array.isArray(entry?.message?.content) ? entry.message.content : []) {
-    for (const part of Array.isArray(r?.content) ? r.content : []) {
-      const b64 = part?.type === "image" && part.source?.data;
-      if (!b64 || hashOf(b64) !== hash) continue;
-      fs.mkdirSync(IMG, { recursive: true });
-      const tmp = `${out}.${process.pid}.tmp`;
-      fs.writeFileSync(tmp, Buffer.from(b64, "base64"));
-      fs.renameSync(tmp, out);
-      return out;
-    }
-  }
-  return null;
-}
-function closeTurn(s) {
-  const kept = [];
-  for (const sc of s.turnScreens) {
-    const i = sc.subject ? kept.findIndex((k2) => k2.subject === sc.subject) : -1;
-    if (i >= 0) kept[i] = sc;
-    else kept.push(sc);
-  }
-  for (const sc of kept) {
-    sc.caption = prose(s.said).slice(0, 600);
-    const prev = sc.subject && s.lastOf.get(sc.subject);
-    if (prev && prev.hash === sc.hash) continue;
-    if (prev && sameShape(sc, prev)) sc.before = { hash: prev.hash, ext: prev.ext, at: prev.at };
-    if (sc.subject) s.lastOf.set(sc.subject, sc);
-    s.screens.push(sc);
-  }
-  s.turnScreens = [];
-  s.said = "";
-}
-function onEntry(s, e) {
-  const at = Date.parse(e.timestamp || "") || 0;
-  if (at) {
-    s.firstAt ||= at;
-    s.lastAt = Math.max(s.lastAt, at);
-  }
-  if (e.cwd && !s.cwd) s.cwd = e.cwd;
-  if (e.turnEnded) {
-    closeTurn(s);
-    s.lastStop = "end_turn";
-  }
-  const m2 = e.message;
-  if (!m2) return;
-  const content = m2.content;
-  if (e.type === "user") {
-    const results = Array.isArray(content) ? content.filter((b2) => b2?.type === "tool_result") : [];
-    if (!results.length) {
-      const text = textOf(content);
-      if (!text || e.isMeta) return;
-      closeTurn(s);
-      s.turn++;
-      const marks = [...text.matchAll(MARK)].map((x2) => x2[1]);
-      if (marks.length) {
-        for (const id of marks) {
-          s.arrived[id] = at;
-          s.answers[id] = [];
-        }
-        s.mark = marks;
-      } else {
-        s.mark = null;
-        if (!s.prompt) s.prompt = asked(plain(text)).slice(0, 200);
-      }
-      return;
-    }
-    for (const r of results) {
-      s.openTools = Math.max(0, s.openTools - 1);
-      const use = s.uses.get(r.tool_use_id) || { name: "", input: {} };
-      s.uses.delete(r.tool_use_id);
-      const parts = Array.isArray(r.content) ? r.content : [];
-      const text = textOf(parts);
-      for (const p of parts) {
-        if (p?.type !== "image" || p.source?.type !== "base64") continue;
-        const img = noteImage(s, p.source.data, p.source.media_type);
-        if (!img || img.w < MIN_W || img.h < MIN_H) continue;
-        const url = text.match(/"url"\s*:\s*"([^"]+)"/)?.[1] || use.input.url || null;
-        s.turnScreens.push({
-          hash: img.hash,
-          ext: img.ext,
-          w: img.w,
-          h: img.h,
-          at,
-          turn: s.turn,
-          tool: use.name,
-          url,
-          file: use.input.file_path || use.input.outputPath || null,
-          subject: subjectOf(use.name, use.input, text)
-        });
-      }
-    }
-    return;
-  }
-  if (e.type === "assistant") {
-    s.lastStop = m2.stop_reason || s.lastStop;
-    if (!Array.isArray(content)) return;
-    for (const b2 of content) {
-      if (b2?.type === "tool_use") {
-        s.uses.set(b2.id, { name: b2.name, input: b2.input || {} });
-        s.openTools++;
-        s.now = { at, text: describe(b2.name, b2.input || {}) };
-      }
-      if (b2?.type === "text" && b2.text?.trim()) {
-        s.said = b2.text;
-        if (said(b2.text)) s.now = { at, text: said(b2.text) };
-        if (s.mark) for (const id of s.mark) s.answers[id].push({ at, text: b2.text.trim().slice(0, 4e3) });
-      }
-    }
-  }
-}
-const tick = () => new Promise((r) => setImmediate(r));
-const reading = /* @__PURE__ */ new Map();
-function readTranscript(file, owner) {
-  if (!reading.has(file)) reading.set(file, read(file, owner).finally(() => reading.delete(file)));
-  return reading.get(file);
-}
-async function read(file, owner) {
-  let st;
-  try {
-    st = fs.statSync(file);
-  } catch {
-    states.delete(file);
-    return null;
-  }
-  let s = states.get(file);
-  if (!s || st.size < s.offset) {
-    s = fresh(file, owner);
-    states.set(file, s);
-  }
-  s.size = st.size;
-  if (st.size > s.offset) {
-    const fd = fs.openSync(file, "r");
-    try {
-      const STEP = 4 << 20;
-      while (s.offset < st.size) {
-        const len = Math.min(STEP, st.size - s.offset);
-        const chunk = Buffer.alloc(len);
-        fs.readSync(fd, chunk, 0, len, s.offset);
-        const data = s.carry.length ? Buffer.concat([s.carry, chunk]) : chunk;
-        const base = s.offset - s.carry.length;
-        s.offset += len;
-        let pos = 0;
-        for (let nl = data.indexOf(10, pos); nl >= 0; pos = nl + 1, nl = data.indexOf(10, pos)) {
-          if (nl === pos) continue;
-          let e;
-          try {
-            e = JSON.parse(data.toString("utf8", pos, nl));
-          } catch {
-            continue;
-          }
-          s.line = { at: base + pos, len: nl - pos };
-          if (e.payload && !e.message) e = codexEntry(e);
-          if (e) onEntry(s, e);
-        }
-        s.carry = Buffer.from(data.subarray(pos));
-        s.line = null;
-        await tick();
-      }
-    } finally {
-      fs.closeSync(fd);
-    }
-  }
-  s.mtime = st.mtimeMs;
-  return s;
-}
-const stateOf$1 = (file) => states.get(file) || null;
-function screensOf$1(s) {
-  const open = s.turnScreens.map((sc) => ({ ...sc, caption: prose(s.said).slice(0, 600), open: true }));
-  return [...s.screens, ...open];
-}
-const root = path.join(HOME, "shared-screens");
-const valid = (id) => typeof id === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(id);
-const portable = (id) => typeof id === "string" && /^studio-[0-9a-f]{32}$/.test(id);
-function sharedScreens(session) {
-  if (!valid(session)) return [];
-  const dir = path.join(root, session);
-  let files;
-  try {
-    files = fs.readdirSync(dir);
-  } catch {
-    return [];
-  }
-  const screens = [];
-  for (const name of files) {
-    if (!name.endsWith(".json")) continue;
-    try {
-      screens.push(JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")));
-    } catch {
-    }
-  }
-  return screens.sort((a, b2) => b2.at - a.at);
-}
-function sharedInWindow(since) {
-  let dirs;
-  try {
-    dirs = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  return dirs.filter((d) => d.isDirectory()).flatMap((d) => {
-    const screens = sharedScreens(d.name).filter((s) => s.at >= since);
-    return screens.length ? [{ id: d.name, screens }] : [];
-  });
-}
-function runtimeUrl() {
-  const env = process.env.SCOUT_RUNTIME_URL || process.env.OPENSCOUT_BROKER_URL;
-  if (env) return env.replace(/\/$/, "");
-  try {
-    const home = process.env.OPENSCOUT_HOME || path.join(os.homedir(), ".openscout");
-    const c = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
-    const port = Number(c?.ports?.broker);
-    if (Number.isInteger(port) && port > 0) {
-      const host = !c.host || c.host === "0.0.0.0" || c.host === "::" ? "127.0.0.1" : c.host;
-      return `http://${host}:${port}`;
-    }
-  } catch {
-  }
-  return "http://127.0.0.1:43110";
-}
-async function get(p, ms = 5e3) {
-  const res = await fetch(`${runtimeUrl()}${p}`, { signal: AbortSignal.timeout(ms) });
-  if (!res.ok) throw new Error(`${p}: ${res.status}`);
-  return res;
-}
-const MD = /\.(md|markdown|mdx)$/i;
-const HTML = /\.html?$/i;
-function viewOf(show) {
-  const p = show.sourcePath || "";
-  if (show.kind === "image") return "image";
-  if (show.kind === "video") return "video";
-  if (MD.test(p) || show.mediaType === "text/markdown") return "markdown";
-  if (HTML.test(p) || show.mediaType === "text/html") return "html";
-  if (show.mediaType === "application/pdf") return "pdf";
-  if (/^text\/|json|xml|yaml|toml/.test(show.mediaType)) return "text";
-  return "file";
-}
-const listed = /* @__PURE__ */ new Map();
-const known = /* @__PURE__ */ new Map();
-async function showsFor(roots) {
-  const out = [];
-  await Promise.all([...new Set(roots.filter(Boolean))].map(async (root2) => {
-    const hit = listed.get(root2);
-    if (hit && Date.now() - hit.at < (following.has(root2) ? 3e5 : 8e3)) return out.push(...hit.shows);
-    let shows = [];
-    try {
-      shows = (await (await get(`/v1/shows?projectRoot=${encodeURIComponent(root2)}`)).json()).shows || [];
-    } catch {
-    }
-    listed.set(root2, { at: Date.now(), shows });
-    out.push(...shows);
-  }));
-  const all = [...new Map(out.map((s) => [s.id, s])).values()];
-  const latest = /* @__PURE__ */ new Map();
-  for (const s of all) {
-    known.set(s.id, s);
-    const was = latest.get(s.itemId);
-    if (!was || s.createdAt > was.createdAt) latest.set(s.itemId, s);
-  }
-  return [...latest.values()].sort((a, b2) => b2.createdAt - a.createdAt).map((s) => ({
-    id: s.id,
-    itemId: s.itemId,
-    sessionId: s.sessionId || null,
-    agentId: s.agentId,
-    harness: s.harness || null,
-    projectRoot: s.projectRoot,
-    worktree: s.worktree,
-    branch: s.branch || "",
-    path: s.sourcePath,
-    name: path.basename(s.sourcePath),
-    view: viewOf(s),
-    mediaType: s.mediaType,
-    size: s.byteSize,
-    caption: s.caption || "",
-    at: s.createdAt,
-    versions: all.filter((o) => o.itemId === s.itemId).length
-  }));
-}
-const showById = (id) => known.get(id) || null;
-const following = /* @__PURE__ */ new Map();
-const listeners$1 = /* @__PURE__ */ new Set();
-function onShows(fn) {
-  listeners$1.add(fn);
-  return () => listeners$1.delete(fn);
-}
-function watchShows(roots) {
-  for (const root2 of new Set(roots.filter(Boolean))) if (!following.has(root2)) {
-    following.set(root2, true);
-    follow(root2, 0);
-  }
-}
-async function follow(root2, failures) {
-  let opened = false;
-  try {
-    const res = await fetch(`${runtimeUrl()}/v1/shows/events?projectRoot=${encodeURIComponent(root2)}&since=${Date.now()}`);
-    if (!res.ok || !res.body) throw new Error(String(res.status));
-    opened = true;
-    if (failures) {
-      listed.delete(root2);
-      for (const fn of listeners$1) fn(root2);
-    }
-    const text = new TextDecoder();
-    let buf = "";
-    for await (const chunk of res.body) {
-      buf += text.decode(chunk, { stream: true });
-      let i;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        const block = buf.slice(0, i);
-        buf = buf.slice(i + 2);
-        if (/^event: show\.created$/m.test(block)) {
-          listed.delete(root2);
-          for (const fn of listeners$1) fn(root2);
-        }
-      }
-    }
-  } catch {
-  }
-  const n = opened ? 1 : failures + 1;
-  setTimeout(() => follow(root2, n), Math.min(6e4, 2e3 * 2 ** Math.min(n, 5)));
-}
-async function showBytes(id) {
-  const res = await get(`/v1/shows/${encodeURIComponent(id)}/bytes`, 2e4);
-  return Buffer.from(await res.arrayBuffer());
-}
-const WORKING_MS = 9e4;
-let discovery = { at: 0, up: false, byId: /* @__PURE__ */ new Map() };
-const FOLLOW = 24;
-async function discover() {
-  if (Date.now() - discovery.at < 15e3) return discovery;
-  const next2 = { at: Date.now(), up: false, byId: /* @__PURE__ */ new Map() };
-  try {
-    const res = await fetch(`${runtimeUrl()}/v1/tail/discover`, { signal: AbortSignal.timeout(5e3) });
-    if (res.ok) {
-      const d = await res.json();
-      next2.up = true;
-      for (const t of d.transcripts || []) next2.byId.set(t.sessionId, t);
-    }
-  } catch {
-  }
-  discovery = next2;
-  return next2;
-}
-function openSessions() {
-  const dir = path.join(os.homedir(), ".claude", "sessions");
-  const open = /* @__PURE__ */ new Map();
-  let names = [];
-  try {
-    names = fs.readdirSync(dir).filter((n) => /^\d+\.json$/.test(n));
-  } catch {
-    return open;
-  }
-  for (const n of names) {
-    try {
-      const r = JSON.parse(fs.readFileSync(path.join(dir, n), "utf8"));
-      process.kill(r.pid, 0);
-      if (r.sessionId) open.set(r.sessionId, { pid: r.pid, status: r.status || "", kind: r.kind || "", name: r.name || "" });
-    } catch {
-    }
-  }
-  return open;
-}
-const repoCache = /* @__PURE__ */ new Map();
-function repoOf(cwd) {
-  if (!cwd) return { root: "", name: "unknown" };
-  if (repoCache.has(cwd)) return repoCache.get(cwd);
-  let root2 = cwd.replace(/\/\.claude\/worktrees\/[^/]+.*$/, "");
-  try {
-    const common = execFileSync("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 4e3 }).trim();
-    if (common) root2 = common.endsWith("/.git") ? path.dirname(common) : common;
-  } catch {
-    const parent = path.dirname(root2), base = path.basename(root2);
-    let sibs = [];
-    try {
-      sibs = fs.readdirSync(parent).filter((n) => base.startsWith(`${n}-`) && fs.existsSync(path.join(parent, n, ".git")));
-    } catch {
-    }
-    const best = sibs.sort((a, b2) => b2.length - a.length)[0];
-    if (best) root2 = path.join(parent, best);
-  }
-  const r = { root: root2, name: path.basename(root2) || root2 };
-  repoCache.set(cwd, r);
-  return r;
-}
-let branchCache = /* @__PURE__ */ new Map();
-function branchOf(cwd) {
-  if (!cwd) return "";
-  const hit = branchCache.get(cwd);
-  if (hit && Date.now() - hit.at < 6e4) return hit.v;
-  let v2 = "";
-  try {
-    v2 = execFileSync("git", ["-C", cwd, "branch", "--show-current"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).trim();
-  } catch {
-  }
-  branchCache.set(cwd, { at: Date.now(), v: v2 });
-  return v2;
-}
-function transcriptsSince(since) {
-  const out = codexFiles(since);
-  let dirs = [];
-  try {
-    dirs = fs.readdirSync(CLAUDE_PROJECTS);
-  } catch {
-    return out;
-  }
-  for (const d of dirs) {
-    const base = path.join(CLAUDE_PROJECTS, d);
-    let names = [];
-    try {
-      names = fs.readdirSync(base);
-    } catch {
-      continue;
-    }
-    for (const n of names) {
-      const p = path.join(base, n);
-      if (n.endsWith(".jsonl")) {
-        try {
-          const st = fs.statSync(p);
-          if (st.mtimeMs >= since) out.push({ file: p, session: n.slice(0, -6), mtime: st.mtimeMs, size: st.size });
-        } catch {
-        }
-      } else if (!n.includes(".")) {
-        const sub = path.join(p, "subagents");
-        let subs2 = [];
-        try {
-          subs2 = fs.readdirSync(sub).filter((x2) => x2.endsWith(".jsonl"));
-        } catch {
-          continue;
-        }
-        for (const x2 of subs2) {
-          const f = path.join(sub, x2);
-          try {
-            const st = fs.statSync(f);
-            if (st.mtimeMs >= since) out.push({ file: f, session: n, subagent: true, mtime: st.mtimeMs, size: st.size });
-          } catch {
-          }
-        }
-      }
-    }
-  }
-  return out;
-}
-const loads = /* @__PURE__ */ new Map();
-function load$2(hours) {
-  const was = loads.get(hours);
-  if (was && (!was.done || Date.now() - was.endedAt < 1e4)) return was;
-  const files = transcriptsSince(Date.now() - hours * 36e5).sort((a, b2) => b2.mtime - a.mtime);
-  const l = { files, done: false, endedAt: 0, first: !was, start: new Map(files.map((t) => [t.file, stateOf$1(t.file)?.offset || 0])) };
-  loads.set(hours, l);
-  (async () => {
-    for (const t of files) await readTranscript(t.file, t.session).catch(() => null);
-    l.done = true;
-    l.endedAt = Date.now();
-  })();
-  return l;
-}
-async function canvas(hours = 4) {
-  const since = Date.now() - hours * 36e5;
-  const l = load$2(hours);
-  const [disc, open] = [await discover(), openSessions()];
-  const bySession = /* @__PURE__ */ new Map();
-  let read2 = 0, total = 0;
-  const partial = /* @__PURE__ */ new Set();
-  for (const t of l.files) {
-    const s = stateOf$1(t.file);
-    const from = l.start.get(t.file) || 0;
-    total += Math.max(0, t.size - from);
-    read2 += s ? Math.max(0, Math.min(s.offset, t.size) - from) : 0;
-    if (!s || s.offset < t.size) partial.add(t.session);
-    if (!s) continue;
-    s.harness = t.harness || "claude";
-    let rec = bySession.get(t.session);
-    if (!rec) bySession.set(t.session, rec = { id: t.session, own: null, parts: [] });
-    if (t.subagent) rec.parts.push(s);
-    else rec.own = s;
-  }
-  const seen = /* @__PURE__ */ new Map();
-  for (const rec of bySession.values()) {
-    const s = rec.own || rec.parts[0];
-    if (s?.cwd) seen.set(s.cwd, Math.max(seen.get(s.cwd) || 0, s.lastAt || 0));
-  }
-  for (const t of disc.byId.values()) if (t.cwd && (t.lastEventAt || 0) >= since) seen.set(t.cwd, Math.max(seen.get(t.cwd) || 0, t.lastEventAt));
-  const latestFor = /* @__PURE__ */ new Map();
-  for (const [cwd, at] of seen) {
-    const r = repoOf(cwd).root;
-    if (r) latestFor.set(r, Math.max(latestFor.get(r) || 0, at));
-  }
-  const roots = [...latestFor].sort((a, b2) => b2[1] - a[1]).map(([r]) => r).slice(0, FOLLOW);
-  const shows = disc.up ? (await showsFor(roots)).filter((sh) => sh.at >= since) : [];
-  if (disc.up) watchShows(roots);
-  const showsBy = /* @__PURE__ */ new Map();
-  for (const sh of shows) showsBy.set(sh.sessionId, [...showsBy.get(sh.sessionId) || [], sh]);
-  const projects = /* @__PURE__ */ new Map();
-  for (const rec of bySession.values()) {
-    const all = [rec.own, ...rec.parts].filter(Boolean);
-    const screens = all.flatMap(screensOf$1).filter((sc) => sc.at >= since).sort((a, b2) => a.at - b2.at);
-    const shown = showsBy.get(rec.id) || [];
-    showsBy.delete(rec.id);
-    if (!screens.length && !shown.length) continue;
-    const own = rec.own || all[0];
-    const cwd = own.cwd || all.find((s) => s.cwd)?.cwd || "";
-    const d = disc.byId.get(rec.id) || {};
-    const o = open.get(rec.id);
-    const lastAt = Math.max(...all.map((s) => s.lastAt || 0));
-    const working = !!o && (o.status === "busy" || Date.now() - lastAt < WORKING_MS && (own.lastStop !== "end_turn" || own.openTools > 0));
-    const repo = repoOf(cwd);
-    const session = {
-      id: rec.id,
-      harness: own.harness || "claude",
-      cwd,
-      branch: branchOf(cwd),
-      // Claude's own title first; Scout's relay names (session-…-relay-agent) say nothing to a person
-      // and a title that is only Scout's delivery wrapping says nothing either: the task says more
-      title: [d.customTitle, d.aiTitle, d.title, o?.name, d.sessionName].find((t) => t && !/^session-[a-z0-9]+-[a-z0-9]+/.test(t) && !isWrapped(t)) || own.prompt.slice(0, 80) || rec.id.slice(0, 8),
-      prompt: own.prompt,
-      firstAt: own.firstAt,
-      lastAt,
-      open: !!o,
-      working,
-      attention: d.attention || d.waitingFor || null,
-      // what it did last, from it or one of its subagents, whichever was later
-      now: all.map((s) => s.now).filter(Boolean).sort((a, b2) => b2.at - a.at)[0]?.text || null,
-      screens: screens.map((sc) => ({
-        id: `${rec.id}:${sc.hash}`,
-        hash: sc.hash,
-        ext: sc.ext,
-        w: sc.w,
-        h: sc.h,
-        at: sc.at,
-        tool: sc.tool,
-        url: sc.url,
-        file: sc.file,
-        caption: sc.caption,
-        before: sc.before || null,
-        open: !!sc.open
-      })),
-      shows: shown
-    };
-    if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
-    projects.get(repo.root).sessions.push(session);
-  }
-  for (const { id, screens } of sharedInWindow(since)) {
-    const first = screens[0], repo = repoOf(first.cwd);
-    if (!projects.has(repo.root)) projects.set(repo.root, { ...repo, sessions: [] });
-    const group = projects.get(repo.root);
-    let session = group.sessions.find((s) => s.id === id);
-    if (!session) {
-      session = {
-        id,
-        harness: first.harness,
-        cwd: first.cwd,
-        branch: branchOf(first.cwd),
-        title: first.caption || `Screens from ${first.harness}`,
-        prompt: "",
-        firstAt: screens.at(-1).at,
-        lastAt: first.at,
-        open: false,
-        working: false,
-        now: null,
-        attention: null,
-        screens: [],
-        shows: showsBy.get(id) || []
-      };
-      showsBy.delete(id);
-      group.sessions.push(session);
-    }
-    const seenHashes = new Set(session.screens.map((s) => s.hash));
-    for (const sc of screens) if (!seenHashes.has(sc.hash)) session.screens.push({ ...sc, id: id + ":" + sc.hash });
-    session.screens.sort((a, b2) => a.at - b2.at);
-    session.lastAt = Math.max(session.lastAt, first.at);
-  }
-  for (const [sid, list2] of showsBy) {
-    const first = list2[0], repo = repoOf(first.projectRoot);
-    const session = {
-      id: sid || `shown:${first.worktree}`,
-      harness: first.harness || "scout",
-      cwd: first.worktree,
-      branch: first.branch,
-      title: `Shown from ${path.basename(first.worktree)}`,
-      prompt: "",
-      firstAt: Math.min(...list2.map((x2) => x2.at)),
-      lastAt: Math.max(...list2.map((x2) => x2.at)),
-      open: false,
-      working: false,
-      attention: null,
-      now: null,
-      screens: [],
-      shows: list2
-    };
-    if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
-    projects.get(repo.root).sessions.push(session);
-  }
-  const list = [...projects.values()];
-  for (const p of list) p.sessions.sort((a, b2) => b2.lastAt - a.lastAt);
-  list.sort((a, b2) => b2.sessions[0].lastAt - a.sessions[0].lastAt);
-  const sessions = new Set(l.files.map((t) => t.session)).size;
-  const out = {
-    at: Date.now(),
-    hours,
-    scout: { up: disc.up, url: runtimeUrl(), shows: shows.length },
-    projects: list,
-    // how far the read has come, by bytes, so a bar moves evenly
-    loading: { done: l.done, first: l.first, read: read2, total, sessions }
-  };
-  if (l.done) {
-    completed.add(hours);
-    keepSnapshot(hours, out);
-  } else if (!completed.has(hours)) out.projects = merge(snapshot(hours, since), list, partial);
-  return out;
-}
-const completed = /* @__PURE__ */ new Set();
-const snapFile = (hours) => path.join(HOME, `canvas-${hours}h.json`);
-const snapshots = /* @__PURE__ */ new Map();
-function snapshot(hours, since) {
-  if (!snapshots.has(hours)) {
-    let projects = [];
-    try {
-      projects = JSON.parse(fs.readFileSync(snapFile(hours), "utf8")).projects || [];
-    } catch {
-    }
-    snapshots.set(hours, projects);
-  }
-  return snapshots.get(hours).map((p) => ({ ...p, sessions: p.sessions.filter((s) => s.lastAt >= since).map((s) => ({ ...s, working: false, shows: s.shows || [] })) })).filter((p) => p.sessions.length);
-}
-let savedAt = /* @__PURE__ */ new Map();
-function keepSnapshot(hours, out) {
-  if (Date.now() - (savedAt.get(hours) || 0) < 3e4) return;
-  savedAt.set(hours, Date.now());
-  fs.mkdir(HOME, { recursive: true }, () => fs.writeFile(snapFile(hours), JSON.stringify({ at: out.at, projects: out.projects }), () => {
-  }));
-}
-function merge(old, fresh2, partial) {
-  const projects = new Map(old.map((p) => [p.root, { ...p, sessions: [...p.sessions] }]));
-  for (const p of fresh2) {
-    const o = projects.get(p.root);
-    if (!o) {
-      projects.set(p.root, p);
-      continue;
-    }
-    const had = new Map(o.sessions.map((s) => [s.id, s]));
-    const take = p.sessions.filter((s) => !(partial.has(s.id) && had.has(s.id)));
-    const ids = new Set(take.map((s) => s.id));
-    o.sessions = [...take, ...o.sessions.filter((s) => !ids.has(s.id))].sort((a, b2) => b2.lastAt - a.lastAt);
-  }
-  return [...projects.values()].sort((a, b2) => b2.sessions[0].lastAt - a.sessions[0].lastAt);
-}
-async function touch(file) {
-  const rel = path.relative(CLAUDE_PROJECTS, file).split(path.sep);
-  if (rel.length !== 2 && !(rel.length === 4 && rel[2] === "subagents")) return;
-  const subagent = rel.length === 4;
-  const session = subagent ? rel[1] : rel[1].replace(/\.jsonl$/, "");
-  let st;
-  try {
-    st = fs.statSync(file);
-  } catch {
-    return;
-  }
-  for (const l of loads.values()) {
-    if (l.files.some((t) => t.file === file)) continue;
-    l.files.unshift({ file, session, subagent, mtime: st.mtimeMs, size: st.size });
-    l.start.set(file, 0);
-  }
-  await readTranscript(file, session).catch(() => null);
-}
-async function stateOf(sessionId) {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(sessionId)) return null;
-  const codex = codexFiles(0, sessionId)[0];
-  if (codex) return readTranscript(codex.file, sessionId);
-  let dirs = [];
-  try {
-    dirs = fs.readdirSync(CLAUDE_PROJECTS);
-  } catch {
-    return null;
-  }
-  for (const d of dirs) {
-    const f = path.join(CLAUDE_PROJECTS, d, `${sessionId}.jsonl`);
-    if (fs.existsSync(f)) return readTranscript(f, sessionId);
-  }
-  return null;
-}
-const isOpen = (sessionId) => openSessions().get(sessionId) || null;
-let listeners = /* @__PURE__ */ new Set();
-const changed$1 = () => {
-  for (const fn of listeners) try {
-    fn();
-  } catch {
-  }
-};
-function load$1() {
-  try {
-    return JSON.parse(fs.readFileSync(NOTES, "utf8"));
-  } catch {
-    return [];
-  }
-}
-function save$1(list) {
-  fs.mkdirSync(HOME, { recursive: true });
-  const tmp = `${NOTES}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(list, null, 1));
-  fs.renameSync(tmp, NOTES);
-  changed$1();
-}
-function update(id, fn) {
-  const list = load$1();
-  const n = list.find((x2) => x2.id === id);
-  if (!n) return null;
-  fn(n);
-  save$1(list);
-  return n;
-}
-function step(n, ev) {
-  const last = n.trail.at(-1);
-  if (last && last.what === ev.what && last.why === ev.why) return;
-  n.trail.push({ ...ev, at: Date.now() });
-}
-let bin = null;
-function scoutBin() {
-  return bin || (bin = findScout()) || "scout";
-}
-function scout(args, timeout = 6e4) {
-  return new Promise((resolve) => {
-    execFile(scoutBin(), ["--json", ...args], { timeout, maxBuffer: 16e6 }, (err, out) => {
-      let json = null;
-      try {
-        json = JSON.parse(String(out).slice(String(out).indexOf("{")));
-      } catch {
-      }
-      resolve({ json, err: err && !json ? String(err.message || err).slice(0, 200) : null });
-    });
-  });
-}
-function message(n) {
-  const where = `${Math.round(n.x * 100)}% across, ${Math.round(n.y * 100)}% down`;
-  const of = n.screen.url ? ` of ${n.screen.url}` : n.screen.file ? ` (${n.screen.file})` : "";
-  if (n.re) {
-    return [
-      `A reply from Scout Studio to what you pointed at on a screen you took${of}, at ${where} [scout-studio:${n.id}] (pointer ${n.re}).`,
-      ...n.reSay ? ["", `You said: ${n.reSay}`] : [],
-      "",
-      `They answered: ${n.text}`,
-      "",
-      `The screen is ${path.join(IMG, `${n.screen.hash}.${n.screen.ext}`)}. Answer here as usual; the canvas shows your reply beside theirs.`
-    ].join("\n");
-  }
-  return [
-    `A note from Scout Studio on a screen you took${of}, at ${where} [scout-studio:${n.id}]:`,
-    "",
-    n.text,
-    "",
-    `The screen is ${path.join(IMG, `${n.screen.hash}.${n.screen.ext}`)}. Answer here as usual; the canvas shows your reply beside the note.`
-  ].join("\n");
-}
-const carrying = /* @__PURE__ */ new Set();
-async function deliver(id) {
-  const n = load$1().find((x2) => x2.id === id);
-  if (!n || carrying.has(id)) return;
-  const last = n.trail.at(-1)?.what;
-  if (["sent", "handed", "available"].includes(last) || n.kept || n.readAt) return;
-  if (portable(n.session) || n.harness && n.harness !== "claude" && n.harness !== "codex") {
-    update(id, (x2) => step(x2, { what: "available" }));
-    return;
-  }
-  if (n.harness !== "codex" && !isOpen(n.session)) {
-    update(id, (x2) => step(x2, { what: "waiting" }));
-    return;
-  }
-  carrying.add(id);
-  try {
-    const { json, err } = await scout(["session", "send", n.session, message(n), ...n.harness === "codex" ? ["--harness", "codex"] : []]);
-    update(id, (x2) => {
-      if (json?.ok) {
-        step(x2, { what: "sent", how: json.delivery || json.route || json.host || null });
-        x2.sentAt = Date.now();
-      } else if (json?.code === "not_live") step(x2, { what: "waiting" });
-      else {
-        step(x2, { what: "failed", why: json?.code || json?.error?.message || json?.error || err || "no answer from scout" });
-        x2.tries = (x2.tries || 0) + 1;
-      }
-    });
-  } finally {
-    carrying.delete(id);
-  }
-}
-async function handOff(id) {
-  const n = load$1().find((x2) => x2.id === id);
-  if (!n || portable(n.session) || n.harness && n.harness !== "claude") return null;
-  const { json, err } = await scout(["ask", "--project", n.cwd, "--harness", "claude", "--label", "scout-studio", message(n)], 12e4);
-  const ok = json && json.ok !== false && json.receipt?.ok !== false;
-  return update(id, (x2) => {
-    if (ok) step(x2, { what: "handed", task: json.receipt?.taskId || json.taskId || json.handle || null });
-    else step(x2, { what: "failed", why: json?.receipt?.reason || json?.error?.message || json?.error || err || "Scout refused it" });
-  });
-}
-async function notes() {
-  return Promise.all(load$1().map(async (n) => {
-    const s = n.trail.some((t) => t.what === "sent") ? await stateOf(n.session) : null;
-    return { ...n, arrivedAt: n.readAt || s?.arrived[n.id] || null, answers: [...s?.answers[n.id] || [], ...n.directAnswers || []].sort((a, b2) => a.at - b2.at) };
-  }));
-}
-function feedback(session, note, reply) {
-  if (!session || typeof session !== "string") throw Error("Choose a session.");
-  const list = load$1();
-  const mine = list.filter((n) => n.session === session);
-  if (note !== void 0 || reply !== void 0) {
-    const n = mine.find((n2) => n2.id === note);
-    if (!n || typeof reply !== "string" || !reply.trim()) throw Error("Give a note from this session and a reply.");
-    const text = reply.trim().slice(0, 4e3);
-    n.directAnswers ||= [];
-    if (n.directAnswers.at(-1)?.text !== text) n.directAnswers.push({ text, at: Date.now() });
-  }
-  const unread = mine.filter((n) => !n.readAt);
-  for (const n of unread) n.readAt = Date.now();
-  if (unread.length || note) save$1(list);
-  return mine.map((n) => ({
-    id: n.id,
-    text: n.text,
-    screen: n.screen,
-    x: n.x,
-    y: n.y,
-    at: n.at,
-    pointer: n.re,
-    answering: n.reSay,
-    replies: n.directAnswers || []
-  }));
-}
-function addNote({ session, harness, project, cwd, screen, x: x2, y: y2, text, re: re2, reSay }) {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(session || "") || !screen?.hash || typeof text !== "string" || !text.trim()) return null;
-  const n = {
-    id: `n_${crypto.randomBytes(5).toString("hex")}`,
-    session,
-    harness,
-    project: project || "",
-    cwd: cwd || "",
-    screen: { hash: screen.hash, ext: screen.ext || "png", w: screen.w, h: screen.h, url: screen.url || null, file: screen.file || null },
-    x: Math.min(1, Math.max(0, Number(x2) || 0)),
-    y: Math.min(1, Math.max(0, Number(y2) || 0)),
-    text: text.trim().slice(0, 4e3),
-    at: Date.now(),
-    trail: [],
-    // a reply to a pointer the session made: the session hears what it is an answer to
-    ...typeof re2 === "string" && /^p_[a-z0-9]+$/.test(re2) ? { re: re2, reSay: String(reSay || "").slice(0, 2e3) } : {}
-  };
-  materialize(n.screen.hash, n.screen.ext);
-  save$1([...load$1(), n]);
-  deliver(n.id);
-  return n;
-}
-function retry(id) {
-  update(id, (x2) => {
-    x2.tries = 0;
-  });
-  return deliver(id);
-}
-function keep(id, kept = true) {
-  return update(id, (x2) => {
-    x2.kept = kept;
-  });
-}
-function remove(id) {
-  save$1(load$1().filter((x2) => x2.id !== id));
-}
-let timer$1 = null;
-function startSweep() {
-  if (timer$1) return;
-  timer$1 = setInterval(() => {
-    for (const n of load$1()) {
-      const last = n.trail.at(-1)?.what;
-      if (!n.kept && !n.readAt && last !== "available" && last !== "sent" && last !== "handed" && !(last === "failed" && n.tries >= 6)) deliver(n.id);
-    }
-  }, 2e4);
-  timer$1.unref?.();
-}
-function findSession({ session: id }) {
-  if (typeof id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(id)) return null;
-  let dirs = [];
-  try {
-    dirs = fs.readdirSync(CLAUDE_PROJECTS);
-  } catch {
-  }
-  for (const d of dirs) {
-    const file = path.join(CLAUDE_PROJECTS, d, `${id}.jsonl`);
-    if (fs.existsSync(file)) return { id, file };
-  }
-  const codex = codexFiles(0, id)[0];
-  return { id, file: codex?.file || null };
-}
-async function screensFor({ id, file }) {
-  const shared = sharedScreens(id);
-  if (!file) return shared;
-  const files = [file];
-  const sub = path.join(path.dirname(file), id, "subagents");
-  try {
-    for (const n of fs.readdirSync(sub)) if (n.endsWith(".jsonl")) files.push(path.join(sub, n));
-  } catch {
-  }
-  const all = [...shared];
-  for (const f of files) {
-    const s = await readTranscript(f, id);
-    if (s) all.push(...screensOf$1(s));
-  }
-  return all.sort((a, b2) => b2.at - a.at);
-}
-function pickScreen(screens, which = "latest") {
-  if (!screens.length) return null;
-  if (!which || which === "latest") return screens[0];
-  if (/^[0-9a-f]{4,16}$/.test(which)) {
-    const s = screens.find((x2) => x2.hash.startsWith(which));
-    if (s) return s;
-  }
-  if (/^https?:\/\//.test(which) || /^[\w.-]+:\d+/.test(which)) {
-    const s = screens.find((x2) => x2.url && (x2.url === which || x2.url.includes(which.replace(/^https?:\/\//, ""))));
-    if (s) return s;
-  }
-  const abs = path.resolve(which);
-  return screens.find((x2) => x2.file === abs) || screens.find((x2) => x2.file && path.basename(x2.file) === path.basename(which)) || null;
-}
-function load() {
-  try {
-    return JSON.parse(fs.readFileSync(POINTERS, "utf8"));
-  } catch {
-    return [];
-  }
-}
-function save(list) {
-  fs.mkdirSync(HOME, { recursive: true });
-  const tmp = `${POINTERS}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(list, null, 1));
-  fs.renameSync(tmp, POINTERS);
-}
-async function screensOf(session, limit = 12) {
-  if (!session) return null;
-  const s = findSession({ session });
-  if (!s) return null;
-  return (await screensFor(s)).slice(0, limit).map(brief);
-}
-const brief = (sc) => ({
-  id: sc.hash,
-  ext: sc.ext,
-  at: new Date(sc.at).toISOString(),
-  w: sc.w,
-  h: sc.h,
-  page: sc.url || null,
-  file: sc.file || null,
-  tool: sc.tool,
-  settled: !sc.open,
-  said: (sc.caption || "").slice(0, 160)
-});
-function boxOf({ x: x2, y: y2, w: w2 = 0, h = 0, unit = "px" }, screen) {
-  const n = [x2, y2, w2, h].map(Number);
-  if (n.some((v2) => !Number.isFinite(v2) || v2 < 0)) throw new Error("x, y, w and h must be numbers, 0 or more");
-  if (unit !== "px" && unit !== "fraction") throw new Error('unit is "px" or "fraction"');
-  const [fx, fy, fw, fh] = unit === "px" ? [n[0] / screen.w, n[1] / screen.h, n[2] / screen.w, n[3] / screen.h] : n;
-  if (fx > 1 || fy > 1 || fx + fw > 1.001 || fy + fh > 1.001) {
-    throw new Error(`that falls outside the screen, which is ${screen.w}×${screen.h} px`);
-  }
-  const r = (v2) => Math.round(v2 * 1e4) / 1e4;
-  return { x: r(fx), y: r(fy), w: r(fw), h: r(fh) };
-}
-async function addPointer({ session, screen = "latest", at, say }) {
-  if (!session) throw new Error("a pointer needs the session it comes from");
-  const s = findSession({ session });
-  if (!s) throw new Error("Invalid session.");
-  const screens = await screensFor(s);
-  if (!screens.length) throw new Error("this session has no screens yet; take a screenshot first");
-  const sc = pickScreen(screens, screen);
-  if (!sc) throw new Error(`no screen "${screen}" in this session; list them with the screens tool`);
-  const box = boxOf(at || {}, sc);
-  if (!materialize(sc.hash, sc.ext)) throw new Error("couldn't keep a copy of that screen");
-  const p = {
-    id: `p_${crypto.randomBytes(5).toString("hex")}`,
-    session: s.id,
-    cwd: sc.cwd || stateOf$1(s.file)?.cwd || "",
-    screen: { hash: sc.hash, ext: sc.ext, w: sc.w, h: sc.h, at: sc.at, url: sc.url || null, file: sc.file || null, tool: sc.tool, caption: sc.caption || "" },
-    box,
-    say: typeof say === "string" ? say.trim().slice(0, 2e3) : "",
-    at: Date.now(),
-    seenAt: null
-  };
-  save([...load(), p]);
-  return p;
-}
-async function pointer(id) {
-  const p = load().find((x2) => x2.id === id);
-  if (!p) return null;
-  const replies = (await notes()).filter((n) => n.re === id).map((n) => ({ at: n.at, text: n.text, note: n.id }));
-  return { ...p, replies };
-}
-async function pointersOf(session) {
-  const all = await notes();
-  return load().filter((p) => p.session === session).sort((a, b2) => b2.at - a.at).map((p) => ({
-    ...p,
-    replies: all.filter((n) => n.re === p.id).map((n) => ({ at: n.at, text: n.text, note: n.id }))
-  }));
-}
-function markSeen(id) {
-  const list = load();
-  const p = list.find((x2) => x2.id === id);
-  if (p && !p.seenAt) {
-    p.seenAt = Date.now();
-    save(list);
-  }
-  return p || null;
 }
 function M() {
   return { async: false, breaks: false, extensions: null, gfm: true, hooks: null, pedantic: false, renderer: null, silent: false, tokenizer: null, walkTokens: null };
@@ -3335,7 +2234,10 @@ const DRAWN = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src d
 const SANDBOXED = "sandbox allow-scripts allow-popups; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'";
 const INLINE = /^(?:image\/(?:png|jpeg|gif|webp)|video\/(?:mp4|webm|quicktime))$/;
 function viewResponse(show, bytes) {
-  const base = { "cache-control": "private, max-age=31536000, immutable", "x-content-type-options": "nosniff" };
+  const base = {
+    "cache-control": show.local ? "no-store" : "private, max-age=31536000, immutable",
+    "x-content-type-options": "nosniff"
+  };
   const where = show.sourcePath.replace(/^\/Users\/[^/]+/, "~");
   const meta = (extra = []) => `<p class="meta">${[...extra, where, new Date(show.createdAt).toLocaleString()].map((x2) => `<span>${esc(x2)}</span>`).join("")}</p>`;
   const view = show.view;
@@ -3370,13 +2272,2048 @@ function viewResponse(show, bytes) {
   }
   return { status: 200, headers: { ...base, "content-type": "application/octet-stream", "content-disposition": `attachment; filename="${show.name.replace(/"/g, "")}"` }, body: bytes };
 }
+const MIN_W$1 = 320, MIN_H$1 = 200;
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
+const MAX_DOC_BYTES = 8 * 1024 * 1024;
+const IMG_EXT = /\.(png|jpe?g|webp|gif)$/i;
+const HTML_EXT = /\.html?$/i;
+const MD_EXT = /\.(md|markdown|mdx)$/i;
+const BOILERPLATE_MD = /^(readme|agents|claude|gemini|skill|changelog|contributing|license|code_of_conduct|security|todo)\.md$/i;
+const DOC_NAME_HINT = /(?:plan|review|design|spec|brief|audit|roadmap|proposal|one[-_]?pager|dossier|study|notes|architecture|walkthrough|report)/i;
+const DOC_DIR_HINT = /(?:^|\/)(?:plans|reviews|research|docs|artifacts|design|studies|notes|specs)(?:\/|$)/i;
+const BUILD_DIR_RE = /(?:^|\/)(?:node_modules|\.git|dist|build|\.next|out|coverage|vendor|\.turbo|\.vercel|\.cache)(?:\/|$)/;
+const SHELL_CAPTURE_RE = /\b(?:scout\s+browser\s+screenshot|agent-browser\s+screenshot|playwright\s+screenshot|screencapture|action\s+(?:.*\s+)?capture)\b/i;
+const SCREENSHOT_TOOL_RE = /(?:screenshot|screencapture|capture_screen|save_screen)/i;
+const FORBIDDEN_EXACT = /* @__PURE__ */ new Set([
+  "/",
+  "/Users",
+  "/home",
+  "/etc",
+  "/private/etc",
+  "/var",
+  "/private/var",
+  "/System",
+  "/Library"
+]);
+function safeRealpath(p) {
+  if (!p || typeof p !== "string") return null;
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+function isSafeProjectRoot(dir) {
+  const real = safeRealpath(dir);
+  if (!real || FORBIDDEN_EXACT.has(real)) return false;
+  const userHome = safeRealpath(os.homedir()) || os.homedir();
+  if (real === userHome) return false;
+  for (const broad of ["Desktop", "Downloads", "Documents", "Library", ".ssh", ".aws", ".gnupg"]) {
+    if (real === path.join(userHome, broad)) return false;
+  }
+  const tmp = safeRealpath(os.tmpdir()) || os.tmpdir();
+  if (real === tmp) return false;
+  if (real.startsWith(tmp + path.sep)) return true;
+  if (real.startsWith(userHome + path.sep)) {
+    const rel = real.slice(userHome.length + 1).split(path.sep).filter(Boolean);
+    return rel.length >= 1 && !rel[0].startsWith(".ssh");
+  }
+  return real.split(path.sep).filter(Boolean).length >= 3;
+}
+function allowedRootsFor(cwd, extraRoots = []) {
+  const roots = /* @__PURE__ */ new Set();
+  for (const candidate of [cwd, ...extraRoots]) {
+    if (candidate && isSafeProjectRoot(candidate)) {
+      const real = safeRealpath(candidate);
+      if (real) roots.add(real);
+    }
+  }
+  const studioReal = safeRealpath(HOME);
+  if (studioReal) roots.add(studioReal);
+  const openscoutHome = safeRealpath(process.env.OPENSCOUT_HOME || path.join(os.homedir(), ".openscout"));
+  if (openscoutHome) {
+    for (const sub of ["artifacts", "captures", "shows", ".studio"]) {
+      const r = safeRealpath(path.join(openscoutHome, sub));
+      if (r) roots.add(r);
+    }
+  }
+  return [...roots];
+}
+function resolveContainedFile(candidate, cwd, allowedRoots) {
+  if (!candidate || typeof candidate !== "string") return null;
+  let cleaned = candidate.trim().replace(/^['"`]|['"`]$/g, "");
+  if (!cleaned) return null;
+  if (cleaned.startsWith("file://")) {
+    try {
+      cleaned = decodeURIComponent(new URL(cleaned).pathname);
+    } catch {
+      return null;
+    }
+  } else if (cleaned.startsWith("~/")) {
+    cleaned = path.join(os.homedir(), cleaned.slice(2));
+  }
+  const resolved = path.isAbsolute(cleaned) ? cleaned : cwd ? path.resolve(cwd, cleaned) : null;
+  if (!resolved) return null;
+  const real = safeRealpath(resolved);
+  if (!real || BUILD_DIR_RE.test(real)) return null;
+  for (const root2 of allowedRoots) {
+    if (real === root2 || real.startsWith(root2 + path.sep)) return real;
+  }
+  return null;
+}
+const ingestedImages = /* @__PURE__ */ new Map();
+function ingestImageFile(filePath, cwd, allowedRoots, meta = {}) {
+  const real = resolveContainedFile(filePath, cwd, allowedRoots);
+  if (!real || !IMG_EXT.test(real)) return null;
+  let st;
+  try {
+    st = fs.statSync(real);
+  } catch {
+    return null;
+  }
+  if (!st.isFile() || st.size <= 0 || st.size > MAX_IMAGE_BYTES) return null;
+  const cacheKey = `${real}:${Math.floor(st.mtimeMs)}:${st.size}`;
+  if (ingestedImages.has(cacheKey)) {
+    const hit = ingestedImages.get(cacheKey);
+    return hit ? { ...hit, ...meta, at: meta.at || hit.at } : null;
+  }
+  let bytes;
+  try {
+    bytes = fs.readFileSync(real);
+  } catch {
+    return null;
+  }
+  const size = imageSize(bytes);
+  if (!size || size.w < MIN_W$1 || size.h < MIN_H$1) {
+    ingestedImages.set(cacheKey, null);
+    return null;
+  }
+  const ext = bytes[0] === 255 ? "jpg" : bytes[0] === 137 ? "png" : bytes[0] === 71 ? "gif" : "webp";
+  const hash = crypto.createHash("sha1").update(bytes.toString("base64")).digest("hex").slice(0, 16);
+  const dest = path.join(IMG, `${hash}.${ext}`);
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(IMG, { recursive: true });
+    const tmp = `${dest}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(tmp, bytes);
+      fs.renameSync(tmp, dest);
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
+  }
+  const base = {
+    hash,
+    ext,
+    w: size.w,
+    h: size.h,
+    at: Math.floor(st.mtimeMs),
+    file: real,
+    url: null
+  };
+  ingestedImages.set(cacheKey, base);
+  return { ...base, ...meta, at: meta.at || base.at };
+}
+const localShows = /* @__PURE__ */ new Map();
+const captionCache = /* @__PURE__ */ new Map();
+function localShowUuid(realPath) {
+  const h = crypto.createHash("sha1").update(`studio-local-show:${realPath}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+function sniffDocCaption(realPath, view, mtimeMs, size) {
+  const key2 = `${realPath}:${Math.floor(mtimeMs)}:${size}`;
+  if (captionCache.has(key2)) return captionCache.get(key2);
+  let caption = "";
+  try {
+    const fd = fs.openSync(realPath, "r");
+    const buf = Buffer.alloc(Math.min(4096, size));
+    try {
+      fs.readSync(fd, buf, 0, buf.length, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const head = buf.toString("utf8");
+    if (view === "html") {
+      const m2 = /<title[^>]*>([^<]+)<\/title>/i.exec(head);
+      if (m2?.[1]?.trim()) caption = m2[1].trim().slice(0, 72);
+    } else if (view === "markdown") {
+      const { meta, body: body2 } = frontmatter(head);
+      const h1 = /^#\s+(.+)$/m.exec(body2)?.[1]?.trim();
+      caption = (meta.title || h1 || "").replace(/[`*_#]/g, "").trim().slice(0, 72);
+    }
+  } catch {
+  }
+  captionCache.set(key2, caption);
+  return caption;
+}
+function isVisualHtmlCandidate(realPath, projectRoot) {
+  if (!HTML_EXT.test(realPath) || BUILD_DIR_RE.test(realPath)) return false;
+  const base = path.basename(realPath).toLowerCase();
+  if (base === "index.html" && projectRoot && path.dirname(realPath) === projectRoot) {
+    try {
+      const head = fs.readFileSync(realPath, "utf8").slice(0, 2048);
+      if (/src=["']\/?src\/main\.[jt]sx?["']/i.test(head)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+function isEditorialMarkdownCandidate(realPath, fromBrain = false) {
+  if (!MD_EXT.test(realPath) || BUILD_DIR_RE.test(realPath)) return false;
+  const base = path.basename(realPath);
+  if (BOILERPLATE_MD.test(base)) return false;
+  if (fromBrain) return true;
+  const normalized = realPath.split(path.sep).join("/");
+  return DOC_DIR_HINT.test(normalized) || DOC_NAME_HINT.test(base);
+}
+function registerLocalShow(filePath, cwd, allowedRoots, opts = {}) {
+  const real = resolveContainedFile(filePath, cwd, allowedRoots);
+  if (!real) return null;
+  const allowedRoot = allowedRoots.find((r) => real === r || real.startsWith(r + path.sep));
+  if (!allowedRoot) return null;
+  let st;
+  try {
+    st = fs.statSync(real);
+  } catch {
+    return null;
+  }
+  if (!st.isFile() || st.size <= 0 || st.size > MAX_DOC_BYTES) return null;
+  const projectRoot = opts.projectRoot || allowedRoot;
+  let view = null;
+  let mediaType = "application/octet-stream";
+  if (isVisualHtmlCandidate(real, projectRoot)) {
+    view = "html";
+    mediaType = "text/html";
+  } else if (isEditorialMarkdownCandidate(real, Boolean(opts.fromBrain))) {
+    view = "markdown";
+    mediaType = "text/markdown";
+  } else {
+    return null;
+  }
+  const id = localShowUuid(real);
+  const caption = opts.caption || sniffDocCaption(real, view, st.mtimeMs, st.size);
+  const show = {
+    id,
+    itemId: id,
+    sessionId: opts.sessionId || null,
+    agentId: opts.agentId || opts.harness || "local",
+    harness: opts.harness || null,
+    projectRoot,
+    worktree: opts.worktree || cwd || projectRoot,
+    branch: opts.branch || "",
+    path: real,
+    sourcePath: real,
+    name: path.basename(real),
+    view,
+    mediaType,
+    size: st.size,
+    caption,
+    at: opts.at || Math.floor(st.mtimeMs),
+    createdAt: opts.at || Math.floor(st.mtimeMs),
+    versions: 1,
+    local: true
+  };
+  localShows.set(id, { show, realPath: real, allowedRoot });
+  return show;
+}
+function localShowById(id) {
+  return localShows.get(id)?.show || null;
+}
+function localShowBytes(id) {
+  const entry = localShows.get(id);
+  if (!entry) return null;
+  const real = safeRealpath(entry.realPath);
+  if (!real || !(real === entry.allowedRoot || real.startsWith(entry.allowedRoot + path.sep))) return null;
+  try {
+    return fs.readFileSync(real);
+  } catch {
+    return null;
+  }
+}
+function extractImageTokens(text) {
+  if (!text || typeof text !== "string") return [];
+  const out = [];
+  const re2 = /(?:['"`]([^'"`\r\n]+\.(?:png|jpe?g|webp|gif))['"`]|(\S+\.(?:png|jpe?g|webp|gif)))/gi;
+  for (const m2 of text.matchAll(re2)) {
+    const p = (m2[1] || m2[2] || "").replace(/[),.;:]+$/, "");
+    if (p && !/^https?:\/\//i.test(p)) out.push(p);
+  }
+  return out;
+}
+function extractToolArtifacts(toolName, input = {}, outputText = "", rawPatch = "") {
+  const name = String(toolName || "");
+  const screenshots = [];
+  const docs = [];
+  if (SCREENSHOT_TOOL_RE.test(name)) {
+    for (const k2 of ["path", "outputPath", "file_path", "file", "filename", "Path", "TargetFile"]) {
+      if (typeof input[k2] === "string") screenshots.push(input[k2]);
+    }
+    screenshots.push(...extractImageTokens(outputText));
+  }
+  const cmd = String(input.command || input.CommandLine || input.cmd || "");
+  if (cmd && SHELL_CAPTURE_RE.test(cmd)) {
+    screenshots.push(...extractImageTokens(cmd));
+    screenshots.push(...extractImageTokens(outputText));
+  }
+  if (/^(?:Write|Edit|MultiEdit|write_file|edit_file|create_file|replace_file_content)$/i.test(name)) {
+    const target = input.file_path || input.path || input.Path || input.TargetFile;
+    if (typeof target === "string") docs.push(target);
+  }
+  const patchBody = rawPatch || (name === "apply_patch" ? String(input.patch || input.input || "") : "");
+  if (patchBody) {
+    for (const m2 of patchBody.matchAll(/\*\*\* (?:Add|Update) File:\s*([^\r\n]+)/g)) {
+      if (m2[1]?.trim()) docs.push(m2[1].trim());
+    }
+  }
+  return { screenshots: [...new Set(screenshots)], docs: [...new Set(docs)] };
+}
+const WORKSPACE_DIRS = [
+  "design/studio",
+  "design",
+  "plans",
+  "reviews",
+  "artifacts",
+  "scratch",
+  "docs/studies",
+  ".openscout/artifacts"
+];
+const wsCache = /* @__PURE__ */ new Map();
+function walkShallow(dir, maxDepth, out = [], depth = 0) {
+  if (depth > maxDepth) return out;
+  let entries2 = [];
+  try {
+    entries2 = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const ent of entries2) {
+    if (ent.name.startsWith(".") && ent.name !== ".openscout") continue;
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      if (BUILD_DIR_RE.test(full)) continue;
+      walkShallow(full, maxDepth, out, depth + 1);
+    } else if (ent.isFile()) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+function discoverWorkspaceArtifacts(roots, since) {
+  const bucket = Math.floor(since / 6e4);
+  const out = [];
+  for (const root2 of roots) {
+    if (!root2 || !isSafeProjectRoot(root2)) continue;
+    const realRoot = safeRealpath(root2);
+    if (!realRoot) continue;
+    const hit = wsCache.get(realRoot);
+    if (hit && hit.sinceBucket === bucket && Date.now() - hit.at < 15e3) {
+      if (hit.shows.length || hit.screens.length) out.push({ root: realRoot, ...hit });
+      continue;
+    }
+    const allowed = [realRoot];
+    const candidates = [];
+    for (const sub of WORKSPACE_DIRS) {
+      const target = path.join(realRoot, sub);
+      if (fs.existsSync(target)) walkShallow(target, 3, candidates);
+    }
+    const recent = [];
+    for (const file of new Set(candidates)) {
+      try {
+        const st = fs.statSync(file);
+        if (st.mtimeMs >= since && st.size > 0) recent.push({ file, mtimeMs: st.mtimeMs });
+      } catch {
+      }
+    }
+    recent.sort((a, b2) => b2.mtimeMs - a.mtimeMs);
+    const shows = [];
+    const screens = [];
+    for (const item of recent) {
+      if (IMG_EXT.test(item.file) && /(?:^|\/)(?:scratch|artifacts|design)(?:\/|$)/.test(item.file)) {
+        if (screens.length < 12) {
+          const sc = ingestImageFile(item.file, realRoot, allowed, {
+            at: Math.floor(item.mtimeMs),
+            tool: "workspace",
+            caption: path.basename(item.file),
+            open: false
+          });
+          if (sc) screens.push(sc);
+        }
+      } else if (shows.length < 16) {
+        const sh = registerLocalShow(item.file, realRoot, allowed, {
+          projectRoot: realRoot,
+          worktree: realRoot,
+          harness: "scout",
+          at: Math.floor(item.mtimeMs)
+        });
+        if (sh) shows.push(sh);
+      }
+    }
+    wsCache.set(realRoot, { at: Date.now(), sinceBucket: bucket, shows, screens });
+    if (shows.length || screens.length) out.push({ root: realRoot, shows, screens });
+  }
+  return out;
+}
+function entries(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+function antigravityBrainRoots() {
+  if (process.env.SCOUT_STUDIO_ANTIGRAVITY_BRAIN) {
+    return [process.env.SCOUT_STUDIO_ANTIGRAVITY_BRAIN];
+  }
+  const home = os.homedir();
+  return [
+    path.join(home, ".gemini", "antigravity-cli", "brain"),
+    path.join(home, ".gemini", "antigravity", "brain"),
+    path.join(home, ".gemini", "antigravity-ide", "brain")
+  ];
+}
+function kimiSessionRoots() {
+  if (process.env.SCOUT_STUDIO_KIMI_SESSIONS) {
+    return [process.env.SCOUT_STUDIO_KIMI_SESSIONS];
+  }
+  const home = os.homedir();
+  const primary = path.join(process.env.KIMI_CODE_HOME?.trim() || path.join(home, ".kimi-code"), "sessions");
+  return process.env.KIMI_CODE_HOME ? [primary] : [primary, path.join(home, ".kimi", "sessions")];
+}
+function extraCodexRoots() {
+  if (process.env.CODEX_HOME) return [];
+  const alt = path.join(os.homedir(), ".openai-codex", "sessions");
+  return alt !== CODEX_SESSIONS ? [alt] : [];
+}
+function watchableRoots() {
+  const candidates = [
+    CLAUDE_PROJECTS,
+    CODEX_SESSIONS,
+    ...extraCodexRoots(),
+    ...antigravityBrainRoots(),
+    ...kimiSessionRoots(),
+    path.join(HOME, "shared-screens")
+  ];
+  return [...new Set(candidates)].filter((d) => {
+    try {
+      return fs.statSync(d).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+function antigravityFiles(since = 0, targetSession = null) {
+  const out = [];
+  for (const root2 of antigravityBrainRoots()) {
+    for (const ent of entries(root2)) {
+      if (!ent.isDirectory() || ent.name.startsWith(".")) continue;
+      if (targetSession && ent.name !== targetSession) continue;
+      const brainDir = path.join(root2, ent.name);
+      const file = path.join(brainDir, ".system_generated", "logs", "transcript.jsonl");
+      let st;
+      try {
+        st = fs.statSync(file);
+      } catch {
+        continue;
+      }
+      if (st.mtimeMs >= since && st.size > 0) {
+        out.push({
+          file,
+          session: ent.name,
+          harness: "antigravity",
+          brainDir,
+          mtime: st.mtimeMs,
+          size: st.size
+        });
+      }
+    }
+  }
+  return out;
+}
+function walkKimi(dir, since, targetSession, out = [], depth = 0) {
+  if (depth > 5) return out;
+  for (const ent of entries(dir)) {
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      walkKimi(full, since, targetSession, out, depth + 1);
+    } else if (ent.isFile() && ent.name === "wire.jsonl") {
+      const m2 = /sessions[\\/][^\\/]+[\\/]([^\\/]+)/.exec(full);
+      const session = m2?.[1] || path.basename(path.dirname(full));
+      if (targetSession && session !== targetSession) continue;
+      try {
+        const st = fs.statSync(full);
+        if (st.mtimeMs >= since && st.size > 0) {
+          out.push({ file: full, session, harness: "kimi", mtime: st.mtimeMs, size: st.size });
+        }
+      } catch {
+      }
+    }
+  }
+  return out;
+}
+function kimiFiles(since = 0, targetSession = null) {
+  const out = [];
+  for (const root2 of kimiSessionRoots()) walkKimi(root2, since, targetSession, out);
+  return out;
+}
+function extraHarnessFiles(since = 0, targetSession = null) {
+  const out = [
+    ...antigravityFiles(since, targetSession),
+    ...kimiFiles(since, targetSession)
+  ];
+  for (const dir of extraCodexRoots()) {
+    out.push(...codexFilesIn(dir, since, targetSession));
+  }
+  return out;
+}
+function antigravityBrainAssets(since, cwdBySession = /* @__PURE__ */ new Map()) {
+  const results = [];
+  for (const root2 of antigravityBrainRoots()) {
+    for (const ent of entries(root2)) {
+      if (!ent.isDirectory() || ent.name.startsWith(".")) continue;
+      const session = ent.name;
+      const brainDir = path.join(root2, session);
+      const cwd = cwdBySession.get(session) || "";
+      const allowed = allowedRootsFor(cwd, [brainDir]);
+      if (!allowed.length) continue;
+      const screens = [];
+      for (const sub of ["scratch", ".user_uploaded"]) {
+        const subDir = path.join(brainDir, sub);
+        for (const f of entries(subDir)) {
+          if (!f.isFile()) continue;
+          const full = path.join(subDir, f.name);
+          let st;
+          try {
+            st = fs.statSync(full);
+          } catch {
+            continue;
+          }
+          if (st.mtimeMs < since) continue;
+          const sc = ingestImageFile(full, brainDir, allowed, {
+            at: Math.floor(st.mtimeMs),
+            tool: sub === "scratch" ? "antigravity_scratch" : "user_upload",
+            caption: f.name,
+            open: false
+          });
+          if (sc) screens.push(sc);
+        }
+      }
+      const shows = [];
+      for (const f of entries(brainDir)) {
+        if (!f.isFile() || f.name.startsWith(".")) continue;
+        const full = path.join(brainDir, f.name);
+        let st;
+        try {
+          st = fs.statSync(full);
+        } catch {
+          continue;
+        }
+        if (st.mtimeMs < since) continue;
+        const sh = registerLocalShow(full, cwd || brainDir, allowed, {
+          sessionId: session,
+          harness: "antigravity",
+          projectRoot: cwd || brainDir,
+          worktree: cwd || brainDir,
+          at: Math.floor(st.mtimeMs),
+          fromBrain: true
+        });
+        if (sh) shows.push(sh);
+      }
+      if (screens.length || shows.length) {
+        results.push({ session, brainDir, cwd, screens, shows });
+      }
+    }
+  }
+  return results;
+}
+function sniffWorkspaceText(text) {
+  if (!text || typeof text !== "string") return "";
+  const ws = /Active Workspaces:\s*\n\s*-\s*([^\r\n<]+)/i.exec(text);
+  if (ws?.[1]?.trim()) return ws[1].trim();
+  const cwd = /Command Working Directory:\s*([^\r\n<]+)/i.exec(text);
+  if (cwd?.[1]?.trim()) return cwd[1].trim();
+  return "";
+}
+function unwrapUserRequest(raw) {
+  if (!raw || typeof raw !== "string") return "";
+  const m2 = /<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/i.exec(raw);
+  return (m2 ? m2[1] : raw).trim();
+}
+function antigravityEntry(raw) {
+  const step2 = raw?.step || raw;
+  if (!step2 || typeof step2 !== "object") return null;
+  const type = String(step2.type || "");
+  const timestamp = step2.metadata?.createdAt || raw.timestamp || "";
+  let cwd = "";
+  const uri = step2.userInput?.activeUserState?.activeDocument?.workspaceUri;
+  if (typeof uri === "string" && uri.startsWith("file://")) {
+    try {
+      cwd = decodeURIComponent(new URL(uri).pathname);
+    } catch {
+    }
+  }
+  if (type === "USER_INPUT" || type.endsWith("_USER_INPUT")) {
+    const rawPrompt = String(step2.userInput?.userResponse ?? step2.content ?? "");
+    if (!cwd) cwd = sniffWorkspaceText(rawPrompt);
+    const text = unwrapUserRequest(rawPrompt);
+    if (!text) return cwd ? { timestamp, cwd } : null;
+    return { timestamp, cwd, type: "user", message: { content: [{ type: "text", text }] } };
+  }
+  if (type === "PLANNER_RESPONSE" || type.endsWith("_PLANNER_RESPONSE")) {
+    const pr = step2.plannerResponse || {};
+    const calls = pr.toolCalls || step2.tool_calls || [];
+    const content = [];
+    const reply = String(pr.modifiedResponse ?? pr.response ?? (typeof step2.content === "string" ? step2.content : "")).trim();
+    if (reply) content.push({ type: "text", text: reply });
+    for (const tc of calls) {
+      let args = tc.arguments || tc.args || {};
+      if (typeof tc.argumentsJson === "string") {
+        try {
+          args = JSON.parse(tc.argumentsJson);
+        } catch {
+        }
+      }
+      const id = tc.id || tc.callId || `agy_${content.length}`;
+      const name = tc.name || tc.tool_name || "tool";
+      content.push({ type: "tool_use", id, name, input: args || {} });
+      const hint = args?.Path || args?.TargetFile;
+      if (!cwd && typeof hint === "string" && hint.startsWith("/")) {
+        const dev = /^(\/(?:Users|home)\/[^/]+\/dev\/[^/]+)/.exec(hint);
+        if (dev?.[1]) cwd = dev[1];
+      }
+    }
+    return {
+      timestamp,
+      cwd,
+      turnEnded: calls.length === 0,
+      type: "assistant",
+      message: { stop_reason: calls.length ? "tool_use" : "end_turn", content }
+    };
+  }
+  if (step2.runCommand?.combinedOutput?.full || step2.runCommand?.commandLine) {
+    const out = String(step2.runCommand?.combinedOutput?.full || "");
+    const cmd = String(step2.runCommand?.commandLine || "");
+    if (!cwd && step2.runCommand?.cwd) cwd = step2.runCommand.cwd;
+    const callId = step2.metadata?.toolCallId || "agy_cmd";
+    return {
+      timestamp,
+      cwd,
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: callId, content: [{ type: "text", text: `${cmd}
+${out}` }] }]
+      }
+    };
+  }
+  return cwd ? { timestamp, cwd } : null;
+}
+function kimiEntry(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const timestamp = raw.timestamp || raw.created_at || "";
+  if (raw.type === "turn.prompt") {
+    const text = typeof raw.input === "string" ? raw.input : typeof raw.content === "string" ? raw.content : "";
+    return text ? { timestamp, cwd: raw.cwd || "", type: "user", message: { content: [{ type: "text", text }] } } : null;
+  }
+  if (raw.type === "context.append_loop_event" && raw.event) {
+    const ev = raw.event;
+    if (ev.type === "tool.call") {
+      let input = ev.args ?? ev.input ?? {};
+      if (typeof input === "string") {
+        try {
+          input = JSON.parse(input);
+        } catch {
+          input = { command: input };
+        }
+      }
+      return {
+        timestamp,
+        type: "assistant",
+        message: { content: [{ type: "tool_use", id: ev.id || "kimi_tc", name: ev.name || "tool", input }] }
+      };
+    }
+    if (ev.part?.text) {
+      return {
+        timestamp,
+        type: "assistant",
+        message: { content: [{ type: "text", text: String(ev.part.text) }] }
+      };
+    }
+  }
+  if (raw.type === "turn.end") return { timestamp, turnEnded: true };
+  return null;
+}
+function classifyTranscriptFile(file) {
+  if (file.startsWith(CLAUDE_PROJECTS + path.sep)) {
+    const rel = path.relative(CLAUDE_PROJECTS, file).split(path.sep);
+    if (rel.length === 2 && rel[1].endsWith(".jsonl")) {
+      return { session: rel[1].slice(0, -6), harness: "claude", subagent: false };
+    }
+    if (rel.length === 4 && rel[2] === "subagents" && rel[3].endsWith(".jsonl")) {
+      return { session: rel[1], harness: "claude", subagent: true };
+    }
+  }
+  const codexUuid = file.match(/-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$/i)?.[1];
+  if (codexUuid) return { session: codexUuid, harness: "codex", subagent: false };
+  const brainMatch = /brain[\\/]([^\\/]+)[\\/]\.system_generated[\\/]logs[\\/]transcript\.jsonl$/.exec(file);
+  if (brainMatch?.[1]) {
+    return {
+      session: brainMatch[1],
+      harness: "antigravity",
+      subagent: false,
+      brainDir: file.slice(0, file.indexOf(`${path.sep}.system_generated`))
+    };
+  }
+  if (file.endsWith(`${path.sep}wire.jsonl`)) {
+    const m2 = /sessions[\\/][^\\/]+[\\/]([^\\/]+)/.exec(file);
+    return { session: m2?.[1] || path.basename(path.dirname(file)), harness: "kimi", subagent: false };
+  }
+  return null;
+}
+const clip = (s, n) => {
+  s = String(s || "").replace(/\s+/g, " ").trim();
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+};
+const bare = (url) => String(url || "").replace(/^https?:\/\//, "");
+function describe(name = "", input = {}) {
+  const file = input.file_path || input.notebook_path || "";
+  const base = file ? path.basename(file) : "";
+  if (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(name) && base) return `Edited ${base}`;
+  if (name === "Read" && base) return `Read ${base}`;
+  if (name === "Grep" || name === "Glob") return `Searched ${clip(input.pattern, 48)}`;
+  if (name === "Bash") {
+    return clip(input.description, 64) || clip(String(input.command || "").replace(/^cd\s+\S+\s*&&\s*/, ""), 64) || "Ran a command";
+  }
+  if (name === "Agent" || name === "Task") return `Started an agent: ${clip(input.description || input.subagent_type, 48)}`.replace(/: $/, "");
+  if (name === "WebFetch" || name === "WebSearch") return `Looked up ${clip(bare(input.url || input.query), 40)}`;
+  if (name === "TodoWrite" || name === "TaskCreate" || name === "TaskUpdate") return "Updated its tasks";
+  if (/^mcp__\w+__browser_/.test(name)) {
+    return clip(`${name.replace(/^mcp__\w+__browser_/, "Browser ").replace(/_/g, " ")} ${clip(bare(input.url), 40)}`, 64);
+  }
+  if (/^mcp__scout__(ask|reply|session_send|messages_)/.test(name)) return "Messaged an agent";
+  return clip(name.replace(/^mcp__\w+__/, "").replace(/_/g, " "), 40) || "Working";
+}
+function said(text) {
+  const line = String(text || "").split("\n").map((l) => l.replace(/^[#>*\-\s]+/, "").replace(/[*_`]/g, "").trim()).find(Boolean) || "";
+  return clip(line, 64);
+}
+const MIN_W = 320, MIN_H = 200;
+const MARK = /\[scout-(?:studio|canvas):(n_[a-z0-9]+)\]/g;
+const states = /* @__PURE__ */ new Map();
+const places = /* @__PURE__ */ new Map();
+function fresh(file, owner, meta = {}) {
+  return {
+    file,
+    owner,
+    harness: meta.harness || "claude",
+    extraRoots: meta.brainDir ? [meta.brainDir] : [],
+    offset: 0,
+    carry: Buffer.alloc(0),
+    line: null,
+    cwd: "",
+    firstAt: 0,
+    lastAt: 0,
+    lastStop: "",
+    openTools: 0,
+    prompt: "",
+    turn: 0,
+    said: "",
+    uses: /* @__PURE__ */ new Map(),
+    screens: [],
+    turnScreens: [],
+    writtenShows: /* @__PURE__ */ new Map(),
+    lastOf: /* @__PURE__ */ new Map(),
+    mark: null,
+    arrived: {},
+    answers: {},
+    // what it did last, in a few words, and when
+    now: null
+  };
+}
+function subjectOf(tool, input = {}, text = "") {
+  const url = text.match(/"url"\s*:\s*"([^"]+)"/)?.[1] || input.url;
+  if (url) {
+    try {
+      const u3 = new URL(url);
+      return `page:${u3.host}${u3.pathname.replace(/\/$/, "")}`;
+    } catch {
+    }
+  }
+  if (input.wid != null) return `window:${input.wid}`;
+  const file = input.file_path || input.outputPath || input.path;
+  if (typeof file === "string" && /\.(png|jpe?g|webp|gif)$/i.test(file)) {
+    const stem = path.basename(file).replace(/\.[a-z]+$/i, "").replace(/([-_. ]?(before|after|old|new|v?\d+))+$/i, "");
+    return `file:${path.dirname(file)}/${stem || path.basename(file)}`;
+  }
+  return null;
+}
+const sameShape = (a, b2) => Math.abs(a.w / a.h - b2.w / b2.h) / (b2.w / b2.h) < 0.12;
+function textOf(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.filter((b2) => b2?.type === "text").map((b2) => b2.text).join("\n");
+}
+function plain(text) {
+  return text.replace(/<(system-reminder|command-[a-z-]+|local-command-[a-z-]+)[^>]*>[\s\S]*?<\/\1>/g, " ").replace(/<\/?[a-z_][\w-]*(\s[^>]*)?>/gi, " ").replace(/\s+/g, " ").trim();
+}
+const WRAPPED = /^New (?:broker )?(?:ask|message) from \S+\s+(?:Task|Message):\s*/;
+const isWrapped = (text) => WRAPPED.test(text || "");
+function asked(text) {
+  if (!isWrapped(text)) return text;
+  return text.replace(WRAPPED, "").replace(/\s*Follow the OpenScout collaboration contract:[\s\S]*$/, "").trim();
+}
+function prose(text) {
+  return (text || "").replace(/```[\s\S]*?```/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/(\*\*|__)(.+?)\1/g, "$2").replace(/(^|[\s(])[*_]([^*_\s][^*_]*?)[*_](?=[\s).,;:!?]|$)/g, "$1$2").replace(/`([^`]+)`/g, "$1").replace(/^\s{0,3}(#{1,6}\s+|[-*+]\s+|>\s?)/gm, "").replace(/\s+/g, " ").trim();
+}
+const hashOf = (b64) => crypto.createHash("sha1").update(b64).digest("hex").slice(0, 16);
+const extOf = (media) => media === "image/jpeg" ? "jpg" : media === "image/webp" ? "webp" : media === "image/gif" ? "gif" : "png";
+function noteImage(s, b64, media) {
+  const hash = hashOf(b64);
+  const ext = extOf(media);
+  const size = imageSize(Buffer.from(b64.slice(0, 1 << 18), "base64")) || imageSize(Buffer.from(b64, "base64"));
+  if (!size) return null;
+  if (!places.has(hash) && s.line) places.set(hash, { file: s.file, at: s.line.at, len: s.line.len, ext });
+  return { hash, ext, ...size };
+}
+function materialize(hash, ext) {
+  const out = path.join(IMG, `${hash}.${ext}`);
+  if (fs.existsSync(out)) return out;
+  const p = places.get(hash);
+  if (!p) return null;
+  let entry;
+  try {
+    const fd = fs.openSync(p.file, "r");
+    const buf = Buffer.alloc(p.len);
+    try {
+      fs.readSync(fd, buf, 0, p.len, p.at);
+    } finally {
+      fs.closeSync(fd);
+    }
+    entry = JSON.parse(buf.toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (entry.type === "response_item") entry = codexEntry(entry);
+  for (const r of Array.isArray(entry?.message?.content) ? entry.message.content : []) {
+    for (const part of Array.isArray(r?.content) ? r.content : []) {
+      const b64 = part?.type === "image" && part.source?.data;
+      if (!b64 || hashOf(b64) !== hash) continue;
+      fs.mkdirSync(IMG, { recursive: true });
+      const tmp = `${out}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, Buffer.from(b64, "base64"));
+      fs.renameSync(tmp, out);
+      return out;
+    }
+  }
+  return null;
+}
+function closeTurn(s) {
+  const kept = [];
+  for (const sc of s.turnScreens) {
+    const i = sc.subject ? kept.findIndex((k2) => k2.subject === sc.subject) : -1;
+    if (i >= 0) kept[i] = sc;
+    else kept.push(sc);
+  }
+  for (const sc of kept) {
+    sc.caption = prose(s.said).slice(0, 600);
+    const prev = sc.subject && s.lastOf.get(sc.subject);
+    if (prev && prev.hash === sc.hash) continue;
+    if (prev && sameShape(sc, prev)) sc.before = { hash: prev.hash, ext: prev.ext, at: prev.at };
+    if (sc.subject) s.lastOf.set(sc.subject, sc);
+    s.screens.push(sc);
+  }
+  s.turnScreens = [];
+  s.said = "";
+}
+function onEntry(s, e) {
+  const at = Date.parse(e.timestamp || "") || 0;
+  if (at) {
+    s.firstAt ||= at;
+    s.lastAt = Math.max(s.lastAt, at);
+  }
+  if (e.cwd && !s.cwd) s.cwd = e.cwd;
+  if (e.turnEnded) {
+    closeTurn(s);
+    s.lastStop = "end_turn";
+  }
+  const m2 = e.message;
+  if (!m2) return;
+  const content = m2.content;
+  if (e.type === "user") {
+    const results = Array.isArray(content) ? content.filter((b2) => b2?.type === "tool_result") : [];
+    if (!results.length) {
+      const text = textOf(content);
+      if (!text || e.isMeta) return;
+      closeTurn(s);
+      s.turn++;
+      const marks = [...text.matchAll(MARK)].map((x2) => x2[1]);
+      if (marks.length) {
+        for (const id of marks) {
+          s.arrived[id] = at;
+          s.answers[id] = [];
+        }
+        s.mark = marks;
+      } else {
+        s.mark = null;
+        if (!s.prompt) s.prompt = asked(plain(text)).slice(0, 200);
+      }
+      return;
+    }
+    for (const r of results) {
+      s.openTools = Math.max(0, s.openTools - 1);
+      const use = s.uses.get(r.tool_use_id) || { name: "", input: {} };
+      s.uses.delete(r.tool_use_id);
+      const parts = Array.isArray(r.content) ? r.content : typeof r.content === "string" ? [{ type: "text", text: r.content }] : [];
+      const text = textOf(parts);
+      let hadInlineImage = false;
+      for (const p of parts) {
+        if (p?.type !== "image" || p.source?.type !== "base64") continue;
+        const img = noteImage(s, p.source.data, p.source.media_type);
+        if (!img || img.w < MIN_W || img.h < MIN_H) continue;
+        hadInlineImage = true;
+        const url = text.match(/"url"\s*:\s*"([^"]+)"/)?.[1] || use.input.url || null;
+        s.turnScreens.push({
+          hash: img.hash,
+          ext: img.ext,
+          w: img.w,
+          h: img.h,
+          at,
+          turn: s.turn,
+          tool: use.name,
+          url,
+          file: use.input.file_path || use.input.outputPath || null,
+          subject: subjectOf(use.name, use.input, text)
+        });
+      }
+      if (!hadInlineImage && (s.cwd || s.extraRoots.length)) {
+        const extracted = extractToolArtifacts(use.name, use.input, text, use.rawPatch);
+        if (extracted.screenshots.length) {
+          const allowed = allowedRootsFor(s.cwd, s.extraRoots);
+          for (const candidate of extracted.screenshots) {
+            const img = ingestImageFile(candidate, s.cwd, allowed, { at: at || Date.now() });
+            if (!img) continue;
+            const url = text.match(/"url"\s*:\s*"([^"]+)"/)?.[1] || use.input.url || null;
+            s.turnScreens.push({
+              hash: img.hash,
+              ext: img.ext,
+              w: img.w,
+              h: img.h,
+              at: img.at,
+              turn: s.turn,
+              tool: use.name,
+              url,
+              file: img.file,
+              subject: subjectOf(use.name, { ...use.input, file_path: img.file }, text)
+            });
+          }
+        }
+      }
+    }
+    return;
+  }
+  if (e.type === "assistant") {
+    s.lastStop = m2.stop_reason || s.lastStop;
+    if (!Array.isArray(content)) return;
+    for (const b2 of content) {
+      if (b2?.type === "tool_use") {
+        s.uses.set(b2.id, { name: b2.name, input: b2.input || {}, rawPatch: b2.rawPatch || "" });
+        s.openTools++;
+        s.now = { at, text: describe(b2.name, b2.input || {}) };
+        if (s.cwd || s.extraRoots.length) {
+          const extracted = extractToolArtifacts(b2.name, b2.input || {}, "", b2.rawPatch || "");
+          if (extracted.docs.length || extracted.screenshots.length) {
+            const allowed = allowedRootsFor(s.cwd, s.extraRoots);
+            for (const docPath of extracted.docs) {
+              const sh = registerLocalShow(docPath, s.cwd, allowed, {
+                sessionId: s.owner,
+                harness: s.harness || "claude",
+                worktree: s.cwd,
+                at: at || void 0
+              });
+              if (sh) s.writtenShows.set(sh.id, sh);
+            }
+            for (const shotPath of extracted.screenshots) {
+              const img = ingestImageFile(shotPath, s.cwd, allowed, { at: at || void 0 });
+              if (img) {
+                s.turnScreens.push({
+                  hash: img.hash,
+                  ext: img.ext,
+                  w: img.w,
+                  h: img.h,
+                  at: img.at,
+                  turn: s.turn,
+                  tool: b2.name,
+                  url: b2.input?.url || null,
+                  file: img.file,
+                  subject: subjectOf(b2.name, { ...b2.input || {}, file_path: img.file }, "")
+                });
+              }
+            }
+          }
+        }
+      }
+      if (b2?.type === "text" && b2.text?.trim()) {
+        s.said = b2.text;
+        if (said(b2.text)) s.now = { at, text: said(b2.text) };
+        if (s.mark) for (const id of s.mark) s.answers[id].push({ at, text: b2.text.trim().slice(0, 4e3) });
+      }
+    }
+  }
+}
+const tick = () => new Promise((r) => setImmediate(r));
+const reading = /* @__PURE__ */ new Map();
+function readTranscript(file, owner, meta) {
+  if (!reading.has(file)) reading.set(file, read(file, owner, meta).finally(() => reading.delete(file)));
+  return reading.get(file);
+}
+async function read(file, owner, meta = {}) {
+  let st;
+  try {
+    st = fs.statSync(file);
+  } catch {
+    states.delete(file);
+    return null;
+  }
+  let s = states.get(file);
+  if (!s || st.size < s.offset) {
+    s = fresh(file, owner, meta);
+    states.set(file, s);
+  }
+  if (meta.harness) s.harness = meta.harness;
+  if (meta.brainDir && !s.extraRoots.includes(meta.brainDir)) s.extraRoots.push(meta.brainDir);
+  s.size = st.size;
+  if (st.size > s.offset) {
+    const fd = fs.openSync(file, "r");
+    try {
+      const STEP = 4 << 20;
+      while (s.offset < st.size) {
+        const len = Math.min(STEP, st.size - s.offset);
+        const chunk = Buffer.alloc(len);
+        fs.readSync(fd, chunk, 0, len, s.offset);
+        const data = s.carry.length ? Buffer.concat([s.carry, chunk]) : chunk;
+        const base = s.offset - s.carry.length;
+        s.offset += len;
+        let pos = 0;
+        for (let nl = data.indexOf(10, pos); nl >= 0; pos = nl + 1, nl = data.indexOf(10, pos)) {
+          if (nl === pos) continue;
+          let e;
+          try {
+            e = JSON.parse(data.toString("utf8", pos, nl));
+          } catch {
+            continue;
+          }
+          s.line = { at: base + pos, len: nl - pos };
+          if (s.harness === "antigravity" || e.step) e = antigravityEntry(e);
+          else if (s.harness === "kimi" || String(e.type || "").startsWith("turn.") || e.type === "context.append_loop_event") e = kimiEntry(e);
+          else if (e.payload && !e.message) e = codexEntry(e);
+          if (e) onEntry(s, e);
+        }
+        s.carry = Buffer.from(data.subarray(pos));
+        s.line = null;
+        await tick();
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  s.mtime = st.mtimeMs;
+  return s;
+}
+const stateOf$1 = (file) => states.get(file) || null;
+function screensOf$1(s) {
+  const open = s.turnScreens.map((sc) => ({ ...sc, caption: prose(s.said).slice(0, 600), open: true }));
+  return [...s.screens, ...open];
+}
+const root = path.join(HOME, "shared-screens");
+const valid = (id) => typeof id === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(id);
+const portable = (id) => typeof id === "string" && /^studio-[0-9a-f]{32}$/.test(id);
+function sharedScreens(session) {
+  if (!valid(session)) return [];
+  const dir = path.join(root, session);
+  let files;
+  try {
+    files = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const screens = [];
+  for (const name of files) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      screens.push(JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")));
+    } catch {
+    }
+  }
+  return screens.sort((a, b2) => b2.at - a.at);
+}
+function sharedInWindow(since) {
+  let dirs;
+  try {
+    dirs = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return dirs.filter((d) => d.isDirectory()).flatMap((d) => {
+    const screens = sharedScreens(d.name).filter((s) => s.at >= since);
+    return screens.length ? [{ id: d.name, screens }] : [];
+  });
+}
+function runtimeUrl() {
+  const env = process.env.SCOUT_RUNTIME_URL || process.env.OPENSCOUT_BROKER_URL;
+  if (env) return env.replace(/\/$/, "");
+  try {
+    const home = process.env.OPENSCOUT_HOME || path.join(os.homedir(), ".openscout");
+    const c = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+    const port = Number(c?.ports?.broker);
+    if (Number.isInteger(port) && port > 0) {
+      const host = !c.host || c.host === "0.0.0.0" || c.host === "::" ? "127.0.0.1" : c.host;
+      return `http://${host}:${port}`;
+    }
+  } catch {
+  }
+  return "http://127.0.0.1:43110";
+}
+async function get(p, ms = 5e3) {
+  const res = await fetch(`${runtimeUrl()}${p}`, { signal: AbortSignal.timeout(ms) });
+  if (!res.ok) throw new Error(`${p}: ${res.status}`);
+  return res;
+}
+const MD = /\.(md|markdown|mdx)$/i;
+const HTML = /\.html?$/i;
+function viewOf(show) {
+  const p = show.sourcePath || "";
+  if (show.kind === "image") return "image";
+  if (show.kind === "video") return "video";
+  if (MD.test(p) || show.mediaType === "text/markdown") return "markdown";
+  if (HTML.test(p) || show.mediaType === "text/html") return "html";
+  if (show.mediaType === "application/pdf") return "pdf";
+  if (/^text\/|json|xml|yaml|toml/.test(show.mediaType)) return "text";
+  return "file";
+}
+const listed = /* @__PURE__ */ new Map();
+const known = /* @__PURE__ */ new Map();
+async function showsFor(roots) {
+  const out = [];
+  const globalHit = listed.get("*");
+  if (globalHit && Date.now() - globalHit.at < 8e3) {
+    out.push(...globalHit.shows);
+  } else {
+    let globalShows = [];
+    try {
+      globalShows = (await (await get("/v1/shows")).json()).shows || [];
+    } catch {
+    }
+    listed.set("*", { at: Date.now(), shows: globalShows });
+    out.push(...globalShows);
+  }
+  await Promise.all([...new Set(roots.filter(Boolean))].map(async (root2) => {
+    const hit = listed.get(root2);
+    if (hit && Date.now() - hit.at < (following.has(root2) ? 3e5 : 8e3)) return out.push(...hit.shows);
+    let shows = [];
+    try {
+      shows = (await (await get(`/v1/shows?projectRoot=${encodeURIComponent(root2)}`)).json()).shows || [];
+    } catch {
+    }
+    listed.set(root2, { at: Date.now(), shows });
+    out.push(...shows);
+  }));
+  const all = [...new Map(out.map((s) => [s.id, s])).values()];
+  const latest = /* @__PURE__ */ new Map();
+  for (const s of all) {
+    known.set(s.id, s);
+    const was = latest.get(s.itemId);
+    if (!was || s.createdAt > was.createdAt) latest.set(s.itemId, s);
+  }
+  return [...latest.values()].sort((a, b2) => b2.createdAt - a.createdAt).map((s) => ({
+    id: s.id,
+    itemId: s.itemId,
+    sessionId: s.sessionId || null,
+    agentId: s.agentId,
+    harness: s.harness || null,
+    projectRoot: s.projectRoot,
+    worktree: s.worktree,
+    branch: s.branch || "",
+    path: s.sourcePath,
+    name: path.basename(s.sourcePath),
+    view: viewOf(s),
+    mediaType: s.mediaType,
+    size: s.byteSize,
+    caption: s.caption || "",
+    at: s.createdAt,
+    versions: all.filter((o) => o.itemId === s.itemId).length
+  }));
+}
+const showById = (id) => known.get(id) || null;
+const following = /* @__PURE__ */ new Map();
+const listeners$1 = /* @__PURE__ */ new Set();
+function onShows(fn) {
+  listeners$1.add(fn);
+  return () => listeners$1.delete(fn);
+}
+function watchShows(roots) {
+  for (const root2 of new Set(roots.filter(Boolean))) if (!following.has(root2)) {
+    following.set(root2, true);
+    follow(root2, 0);
+  }
+}
+async function follow(root2, failures) {
+  let opened = false;
+  try {
+    const res = await fetch(`${runtimeUrl()}/v1/shows/events?projectRoot=${encodeURIComponent(root2)}&since=${Date.now()}`);
+    if (!res.ok || !res.body) throw new Error(String(res.status));
+    opened = true;
+    if (failures) {
+      listed.delete(root2);
+      for (const fn of listeners$1) fn(root2);
+    }
+    const text = new TextDecoder();
+    let buf = "";
+    for await (const chunk of res.body) {
+      buf += text.decode(chunk, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        if (/^event: show\.created$/m.test(block)) {
+          listed.delete(root2);
+          for (const fn of listeners$1) fn(root2);
+        }
+      }
+    }
+  } catch {
+  }
+  const n = opened ? 1 : failures + 1;
+  setTimeout(() => follow(root2, n), Math.min(6e4, 2e3 * 2 ** Math.min(n, 5)));
+}
+async function showBytes(id) {
+  const res = await get(`/v1/shows/${encodeURIComponent(id)}/bytes`, 2e4);
+  return Buffer.from(await res.arrayBuffer());
+}
+const WORKING_MS = 9e4;
+let discovery = { at: 0, up: false, byId: /* @__PURE__ */ new Map() };
+const FOLLOW = 24;
+async function discover() {
+  if (Date.now() - discovery.at < 15e3) return discovery;
+  const next2 = { at: Date.now(), up: false, byId: /* @__PURE__ */ new Map() };
+  try {
+    const res = await fetch(`${runtimeUrl()}/v1/tail/discover`, { signal: AbortSignal.timeout(5e3) });
+    if (res.ok) {
+      const d = await res.json();
+      next2.up = true;
+      for (const t of d.transcripts || []) next2.byId.set(t.sessionId, t);
+    }
+  } catch {
+  }
+  discovery = next2;
+  return next2;
+}
+function openSessions() {
+  const dir = path.join(os.homedir(), ".claude", "sessions");
+  const open = /* @__PURE__ */ new Map();
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((n) => /^\d+\.json$/.test(n));
+  } catch {
+    return open;
+  }
+  for (const n of names) {
+    try {
+      const r = JSON.parse(fs.readFileSync(path.join(dir, n), "utf8"));
+      process.kill(r.pid, 0);
+      if (r.sessionId) open.set(r.sessionId, { pid: r.pid, status: r.status || "", kind: r.kind || "", name: r.name || "" });
+    } catch {
+    }
+  }
+  return open;
+}
+const repoCache = /* @__PURE__ */ new Map();
+function repoOf(cwd) {
+  if (!cwd) return { root: "", name: "unknown" };
+  if (repoCache.has(cwd)) return repoCache.get(cwd);
+  let root2 = cwd.replace(/\/\.claude\/worktrees\/[^/]+.*$/, "");
+  try {
+    const common = execFileSync("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 4e3 }).trim();
+    if (common) root2 = common.endsWith("/.git") ? path.dirname(common) : common;
+  } catch {
+    const parent = path.dirname(root2), base = path.basename(root2);
+    let sibs = [];
+    try {
+      sibs = fs.readdirSync(parent).filter((n) => base.startsWith(`${n}-`) && fs.existsSync(path.join(parent, n, ".git")));
+    } catch {
+    }
+    const best = sibs.sort((a, b2) => b2.length - a.length)[0];
+    if (best) root2 = path.join(parent, best);
+  }
+  const r = { root: root2, name: path.basename(root2) || root2 };
+  repoCache.set(cwd, r);
+  return r;
+}
+let branchCache = /* @__PURE__ */ new Map();
+function branchOf(cwd) {
+  if (!cwd) return "";
+  const hit = branchCache.get(cwd);
+  if (hit && Date.now() - hit.at < 6e4) return hit.v;
+  let v2 = "";
+  try {
+    v2 = execFileSync("git", ["-C", cwd, "branch", "--show-current"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 }).trim();
+  } catch {
+  }
+  branchCache.set(cwd, { at: Date.now(), v: v2 });
+  return v2;
+}
+function transcriptsSince(since) {
+  const out = [...codexFiles(since), ...extraHarnessFiles(since)];
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(CLAUDE_PROJECTS);
+  } catch {
+    return out;
+  }
+  for (const d of dirs) {
+    const base = path.join(CLAUDE_PROJECTS, d);
+    let names = [];
+    try {
+      names = fs.readdirSync(base);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      const p = path.join(base, n);
+      if (n.endsWith(".jsonl")) {
+        try {
+          const st = fs.statSync(p);
+          if (st.mtimeMs >= since) out.push({ file: p, session: n.slice(0, -6), harness: "claude", mtime: st.mtimeMs, size: st.size });
+        } catch {
+        }
+      } else if (!n.includes(".")) {
+        const sub = path.join(p, "subagents");
+        let subs2 = [];
+        try {
+          subs2 = fs.readdirSync(sub).filter((x2) => x2.endsWith(".jsonl"));
+        } catch {
+          continue;
+        }
+        for (const x2 of subs2) {
+          const f = path.join(sub, x2);
+          try {
+            const st = fs.statSync(f);
+            if (st.mtimeMs >= since) out.push({ file: f, session: n, harness: "claude", subagent: true, mtime: st.mtimeMs, size: st.size });
+          } catch {
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+const MAX_LONG_WINDOW_FILES = 80;
+const loads = /* @__PURE__ */ new Map();
+function load$2(hours) {
+  const was = loads.get(hours);
+  if (was && (!was.done || Date.now() - was.endedAt < 1e4)) return was;
+  let files = transcriptsSince(Date.now() - hours * 36e5).sort((a, b2) => b2.mtime - a.mtime);
+  if (hours > 72 && files.length > MAX_LONG_WINDOW_FILES) files = files.slice(0, MAX_LONG_WINDOW_FILES);
+  const l = { files, done: false, endedAt: 0, first: !was, start: new Map(files.map((t) => [t.file, stateOf$1(t.file)?.offset || 0])) };
+  loads.set(hours, l);
+  (async () => {
+    for (const t of files) await readTranscript(t.file, t.session, t).catch(() => null);
+    l.done = true;
+    l.endedAt = Date.now();
+  })();
+  return l;
+}
+async function canvas(hours = 4) {
+  const since = Date.now() - hours * 36e5;
+  const l = load$2(hours);
+  const [disc, open] = [await discover(), openSessions()];
+  const bySession = /* @__PURE__ */ new Map();
+  let read2 = 0, total = 0;
+  const partial = /* @__PURE__ */ new Set();
+  for (const t of l.files) {
+    const s = stateOf$1(t.file);
+    const from = l.start.get(t.file) || 0;
+    total += Math.max(0, t.size - from);
+    read2 += s ? Math.max(0, Math.min(s.offset, t.size) - from) : 0;
+    if (!s || s.offset < t.size) partial.add(t.session);
+    if (!s) continue;
+    s.harness = t.harness || "claude";
+    let rec = bySession.get(t.session);
+    if (!rec) bySession.set(t.session, rec = { id: t.session, own: null, parts: [] });
+    if (t.subagent) rec.parts.push(s);
+    else rec.own = s;
+  }
+  const seen = /* @__PURE__ */ new Map();
+  const cwdBySession = /* @__PURE__ */ new Map();
+  for (const rec of bySession.values()) {
+    const s = rec.own || rec.parts[0];
+    if (s?.cwd) {
+      seen.set(s.cwd, Math.max(seen.get(s.cwd) || 0, s.lastAt || 0));
+      cwdBySession.set(rec.id, s.cwd);
+    }
+  }
+  for (const t of disc.byId.values()) {
+    if (t.cwd) {
+      if (t.sessionId && !cwdBySession.has(t.sessionId)) cwdBySession.set(t.sessionId, t.cwd);
+      const evtAt = t.lastEventAt || t.mtimeMs || 0;
+      if (evtAt >= since) seen.set(t.cwd, Math.max(seen.get(t.cwd) || 0, evtAt));
+    }
+  }
+  const latestFor = /* @__PURE__ */ new Map();
+  for (const [cwd, at] of seen) {
+    const r = repoOf(cwd).root;
+    if (r) latestFor.set(r, Math.max(latestFor.get(r) || 0, at));
+  }
+  const roots = [...latestFor].sort((a, b2) => b2[1] - a[1]).map(([r]) => r).slice(0, FOLLOW);
+  const shows = disc.up ? (await showsFor(roots)).filter((sh) => sh.at >= since) : [];
+  if (disc.up) watchShows(roots);
+  const showsBy = /* @__PURE__ */ new Map();
+  for (const sh of shows) showsBy.set(sh.sessionId, [...showsBy.get(sh.sessionId) || [], sh]);
+  const brainBySession = /* @__PURE__ */ new Map();
+  for (const b2 of antigravityBrainAssets(since, cwdBySession)) brainBySession.set(b2.session, b2);
+  const projects = /* @__PURE__ */ new Map();
+  for (const rec of bySession.values()) {
+    const all = [rec.own, ...rec.parts].filter(Boolean);
+    const brain = brainBySession.get(rec.id);
+    brainBySession.delete(rec.id);
+    const written = [];
+    const seenShowPaths = /* @__PURE__ */ new Set();
+    for (const s of all) {
+      for (const sh of s.writtenShows?.values() || []) {
+        if (sh.at >= since && !seenShowPaths.has(sh.path)) {
+          seenShowPaths.add(sh.path);
+          written.push(sh);
+        }
+      }
+    }
+    if (brain?.shows) {
+      for (const sh of brain.shows) {
+        if (!seenShowPaths.has(sh.path)) {
+          seenShowPaths.add(sh.path);
+          written.push(sh);
+        }
+      }
+    }
+    const runtimeShown = showsBy.get(rec.id) || [];
+    showsBy.delete(rec.id);
+    for (const sh of runtimeShown) seenShowPaths.add(sh.path);
+    const shown = [...runtimeShown, ...written.filter((w2) => !runtimeShown.some((r) => r.path === w2.path))].sort((a, b2) => b2.at - a.at);
+    const rawScreens = [
+      ...all.flatMap(screensOf$1).filter((sc) => sc.at >= since),
+      ...brain?.screens || []
+    ];
+    const dedupScreens = [];
+    const seenHashes = /* @__PURE__ */ new Set();
+    for (const sc of rawScreens.sort((a, b2) => a.at - b2.at)) {
+      if (seenHashes.has(sc.hash)) continue;
+      seenHashes.add(sc.hash);
+      dedupScreens.push(sc);
+    }
+    if (!dedupScreens.length && !shown.length) continue;
+    const own = rec.own || all[0];
+    const d = disc.byId.get(rec.id) || {};
+    const cwd = own.cwd || all.find((s) => s.cwd)?.cwd || d.cwd || brain?.cwd || "";
+    const o = open.get(rec.id);
+    const lastAt = Math.max(
+      ...all.map((s) => s.lastAt || 0),
+      ...dedupScreens.map((sc) => sc.at || 0),
+      ...shown.map((sh) => sh.at || 0)
+    );
+    const working = !!o && (o.status === "busy" || Date.now() - lastAt < WORKING_MS && (own.lastStop !== "end_turn" || own.openTools > 0));
+    const repo = repoOf(cwd || brain?.brainDir || "");
+    const branch = branchOf(cwd);
+    for (const sh of shown) {
+      if (sh.local) {
+        sh.projectRoot = repo.root || sh.projectRoot;
+        sh.worktree = cwd || sh.worktree;
+        sh.branch = branch || sh.branch;
+      }
+    }
+    const session = {
+      id: rec.id,
+      harness: own.harness || d.source || "claude",
+      cwd,
+      branch,
+      // Claude's own title first; Scout's relay names (session-…-relay-agent) say nothing to a person
+      // and a title that is only Scout's delivery wrapping says nothing either: the task says more
+      title: [d.customTitle, d.aiTitle, d.title, d.harnessTitle, o?.name, d.sessionName].find((t) => t && !/^session-[a-z0-9]+-[a-z0-9]+/.test(t) && !isWrapped(t)) || own.prompt.slice(0, 80) || rec.id.slice(0, 8),
+      prompt: own.prompt,
+      firstAt: own.firstAt || lastAt,
+      lastAt,
+      open: !!o,
+      working,
+      attention: d.attention || d.waitingFor || null,
+      // what it did last, from it or one of its subagents, whichever was later
+      now: all.map((s) => s.now).filter(Boolean).sort((a, b2) => b2.at - a.at)[0]?.text || null,
+      screens: dedupScreens.map((sc) => ({
+        id: `${rec.id}:${sc.hash}`,
+        hash: sc.hash,
+        ext: sc.ext,
+        w: sc.w,
+        h: sc.h,
+        at: sc.at,
+        tool: sc.tool,
+        url: sc.url,
+        file: sc.file,
+        caption: sc.caption || "",
+        before: sc.before || null,
+        open: !!sc.open
+      })),
+      shows: shown
+    };
+    if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
+    projects.get(repo.root).sessions.push(session);
+  }
+  for (const [, brain] of brainBySession) {
+    const repo = repoOf(brain.cwd || brain.brainDir);
+    const branch = branchOf(brain.cwd);
+    const allAt = [...brain.screens.map((s) => s.at), ...brain.shows.map((s) => s.at)];
+    const session = {
+      id: brain.session,
+      harness: "antigravity",
+      cwd: brain.cwd || brain.brainDir,
+      branch,
+      title: brain.shows[0]?.caption || `Antigravity · ${repo.name}`,
+      prompt: "",
+      firstAt: Math.min(...allAt),
+      lastAt: Math.max(...allAt),
+      open: false,
+      working: false,
+      attention: null,
+      now: null,
+      screens: brain.screens.map((sc) => ({
+        id: `${brain.session}:${sc.hash}`,
+        hash: sc.hash,
+        ext: sc.ext,
+        w: sc.w,
+        h: sc.h,
+        at: sc.at,
+        tool: sc.tool,
+        url: sc.url,
+        file: sc.file,
+        caption: sc.caption || "",
+        before: null,
+        open: false
+      })),
+      shows: brain.shows
+    };
+    if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
+    projects.get(repo.root).sessions.push(session);
+  }
+  for (const { id, screens } of sharedInWindow(since)) {
+    const first = screens[0], repo = repoOf(first.cwd);
+    if (!projects.has(repo.root)) projects.set(repo.root, { ...repo, sessions: [] });
+    const group = projects.get(repo.root);
+    let session = group.sessions.find((s) => s.id === id);
+    if (!session) {
+      session = {
+        id,
+        harness: first.harness,
+        cwd: first.cwd,
+        branch: branchOf(first.cwd),
+        title: first.caption || `Screens from ${first.harness}`,
+        prompt: "",
+        firstAt: screens.at(-1).at,
+        lastAt: first.at,
+        open: false,
+        working: false,
+        now: null,
+        attention: null,
+        screens: [],
+        shows: showsBy.get(id) || []
+      };
+      showsBy.delete(id);
+      group.sessions.push(session);
+    }
+    const seenHashes = new Set(session.screens.map((s) => s.hash));
+    for (const sc of screens) if (!seenHashes.has(sc.hash)) session.screens.push({ ...sc, id: id + ":" + sc.hash });
+    session.screens.sort((a, b2) => a.at - b2.at);
+    session.lastAt = Math.max(session.lastAt, first.at);
+  }
+  for (const [sid, list2] of showsBy) {
+    const first = list2[0], repo = repoOf(first.projectRoot);
+    const session = {
+      id: sid || `shown:${first.worktree}`,
+      harness: first.harness || "scout",
+      cwd: first.worktree,
+      branch: first.branch,
+      title: `Shown from ${path.basename(first.worktree)}`,
+      prompt: "",
+      firstAt: Math.min(...list2.map((x2) => x2.at)),
+      lastAt: Math.max(...list2.map((x2) => x2.at)),
+      open: false,
+      working: false,
+      attention: null,
+      now: null,
+      screens: [],
+      shows: list2
+    };
+    if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
+    projects.get(repo.root).sessions.push(session);
+  }
+  for (const ws of discoverWorkspaceArtifacts(roots, since)) {
+    const repo = repoOf(ws.root);
+    const existingGroup = projects.get(repo.root);
+    const claimedPaths = new Set(
+      (existingGroup?.sessions || []).flatMap((s) => [
+        ...(s.shows || []).map((sh) => sh.path),
+        ...(s.screens || []).map((sc) => sc.file).filter(Boolean)
+      ])
+    );
+    const unclaimedShows = ws.shows.filter((sh) => !claimedPaths.has(sh.path));
+    const unclaimedScreens = ws.screens.filter((sc) => !claimedPaths.has(sc.file));
+    if (!unclaimedShows.length && !unclaimedScreens.length) continue;
+    const branch = branchOf(ws.root);
+    for (const sh of unclaimedShows) sh.branch = branch || sh.branch;
+    const wsId = `workspace:${repo.name}`;
+    const allAt = [...unclaimedShows.map((s) => s.at), ...unclaimedScreens.map((s) => s.at)];
+    const wsSession = {
+      id: wsId,
+      harness: "scout",
+      cwd: ws.root,
+      branch,
+      title: `Workspace · ${repo.name}`,
+      prompt: "",
+      firstAt: Math.min(...allAt),
+      lastAt: Math.max(...allAt),
+      open: false,
+      working: false,
+      attention: null,
+      now: null,
+      screens: unclaimedScreens.map((sc) => ({
+        id: `${wsId}:${sc.hash}`,
+        hash: sc.hash,
+        ext: sc.ext,
+        w: sc.w,
+        h: sc.h,
+        at: sc.at,
+        tool: sc.tool,
+        url: null,
+        file: sc.file,
+        caption: sc.caption || "",
+        before: null,
+        open: false
+      })),
+      shows: unclaimedShows
+    };
+    if (!projects.has(repo.root)) projects.set(repo.root, { name: repo.name, root: repo.root, sessions: [] });
+    projects.get(repo.root).sessions.push(wsSession);
+  }
+  const list = [...projects.values()];
+  for (const p of list) p.sessions.sort((a, b2) => b2.lastAt - a.lastAt);
+  list.sort((a, b2) => b2.sessions[0].lastAt - a.sessions[0].lastAt);
+  const sessions = new Set(l.files.map((t) => t.session)).size;
+  const out = {
+    at: Date.now(),
+    hours,
+    scout: { up: disc.up, url: runtimeUrl(), shows: shows.length },
+    projects: list,
+    // how far the read has come, by bytes, so a bar moves evenly
+    loading: { done: l.done, first: l.first, read: read2, total, sessions }
+  };
+  if (l.done) {
+    completed.add(hours);
+    keepSnapshot(hours, out);
+  } else if (!completed.has(hours)) out.projects = merge(snapshot(hours, since), list, partial);
+  return out;
+}
+const completed = /* @__PURE__ */ new Set();
+const snapFile = (hours) => path.join(HOME, `canvas-${hours}h.json`);
+const snapshots = /* @__PURE__ */ new Map();
+function snapshot(hours, since) {
+  if (!snapshots.has(hours)) {
+    let projects = [];
+    try {
+      projects = JSON.parse(fs.readFileSync(snapFile(hours), "utf8")).projects || [];
+    } catch {
+    }
+    snapshots.set(hours, projects);
+  }
+  return snapshots.get(hours).map((p) => ({ ...p, sessions: p.sessions.filter((s) => s.lastAt >= since).map((s) => ({ ...s, working: false, shows: s.shows || [] })) })).filter((p) => p.sessions.length);
+}
+let savedAt = /* @__PURE__ */ new Map();
+function keepSnapshot(hours, out) {
+  if (Date.now() - (savedAt.get(hours) || 0) < 3e4) return;
+  savedAt.set(hours, Date.now());
+  fs.mkdir(HOME, { recursive: true }, () => fs.writeFile(snapFile(hours), JSON.stringify({ at: out.at, projects: out.projects }), () => {
+  }));
+}
+function merge(old, fresh2, partial) {
+  const projects = new Map(old.map((p) => [p.root, { ...p, sessions: [...p.sessions] }]));
+  for (const p of fresh2) {
+    const o = projects.get(p.root);
+    if (!o) {
+      projects.set(p.root, p);
+      continue;
+    }
+    const had = new Map(o.sessions.map((s) => [s.id, s]));
+    const take = p.sessions.filter((s) => !(partial.has(s.id) && had.has(s.id)));
+    const ids = new Set(take.map((s) => s.id));
+    o.sessions = [...take, ...o.sessions.filter((s) => !ids.has(s.id))].sort((a, b2) => b2.lastAt - a.lastAt);
+  }
+  return [...projects.values()].sort((a, b2) => b2.sessions[0].lastAt - a.sessions[0].lastAt);
+}
+async function touch(file) {
+  const meta = classifyTranscriptFile(file);
+  if (!meta) return;
+  let st;
+  try {
+    st = fs.statSync(file);
+  } catch {
+    return;
+  }
+  for (const l of loads.values()) {
+    if (l.files.some((t) => t.file === file)) continue;
+    l.files.unshift({ file, ...meta, mtime: st.mtimeMs, size: st.size });
+    l.start.set(file, 0);
+  }
+  await readTranscript(file, meta.session, meta).catch(() => null);
+}
+async function stateOf(sessionId) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(sessionId)) return null;
+  const codex = codexFiles(0, sessionId)[0];
+  if (codex) return readTranscript(codex.file, sessionId, codex);
+  const extra = extraHarnessFiles(0, sessionId)[0];
+  if (extra) return readTranscript(extra.file, sessionId, extra);
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(CLAUDE_PROJECTS);
+  } catch {
+    return null;
+  }
+  for (const d of dirs) {
+    const f = path.join(CLAUDE_PROJECTS, d, `${sessionId}.jsonl`);
+    if (fs.existsSync(f)) return readTranscript(f, sessionId, { harness: "claude" });
+  }
+  return null;
+}
+const isOpen = (sessionId) => openSessions().get(sessionId) || null;
+let listeners = /* @__PURE__ */ new Set();
+const changed$1 = () => {
+  for (const fn of listeners) try {
+    fn();
+  } catch {
+  }
+};
+function load$1() {
+  try {
+    return JSON.parse(fs.readFileSync(NOTES, "utf8"));
+  } catch {
+    return [];
+  }
+}
+function save$1(list) {
+  fs.mkdirSync(HOME, { recursive: true });
+  const tmp = `${NOTES}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(list, null, 1));
+  fs.renameSync(tmp, NOTES);
+  changed$1();
+}
+function update(id, fn) {
+  const list = load$1();
+  const n = list.find((x2) => x2.id === id);
+  if (!n) return null;
+  fn(n);
+  save$1(list);
+  return n;
+}
+function step(n, ev) {
+  const last = n.trail.at(-1);
+  if (last && last.what === ev.what && last.why === ev.why) return;
+  n.trail.push({ ...ev, at: Date.now() });
+}
+let bin = null;
+function scoutBin() {
+  return bin || (bin = findScout()) || "scout";
+}
+function scout(args, timeout = 6e4) {
+  return new Promise((resolve) => {
+    execFile(scoutBin(), ["--json", ...args], { timeout, maxBuffer: 16e6 }, (err, out) => {
+      let json = null;
+      try {
+        json = JSON.parse(String(out).slice(String(out).indexOf("{")));
+      } catch {
+      }
+      resolve({ json, err: err && !json ? String(err.message || err).slice(0, 200) : null });
+    });
+  });
+}
+function message(n) {
+  const where = `${Math.round(n.x * 100)}% across, ${Math.round(n.y * 100)}% down`;
+  const of = n.screen.url ? ` of ${n.screen.url}` : n.screen.file ? ` (${n.screen.file})` : "";
+  if (n.re) {
+    return [
+      `A reply from Scout Studio to what you pointed at on a screen you took${of}, at ${where} [scout-studio:${n.id}] (pointer ${n.re}).`,
+      ...n.reSay ? ["", `You said: ${n.reSay}`] : [],
+      "",
+      `They answered: ${n.text}`,
+      "",
+      `The screen is ${path.join(IMG, `${n.screen.hash}.${n.screen.ext}`)}. Answer here as usual; the canvas shows your reply beside theirs.`
+    ].join("\n");
+  }
+  return [
+    `A note from Scout Studio on a screen you took${of}, at ${where} [scout-studio:${n.id}]:`,
+    "",
+    n.text,
+    "",
+    `The screen is ${path.join(IMG, `${n.screen.hash}.${n.screen.ext}`)}. Answer here as usual; the canvas shows your reply beside the note.`
+  ].join("\n");
+}
+const carrying = /* @__PURE__ */ new Set();
+async function deliver(id) {
+  const n = load$1().find((x2) => x2.id === id);
+  if (!n || carrying.has(id)) return;
+  const last = n.trail.at(-1)?.what;
+  if (["sent", "handed", "available"].includes(last) || n.kept || n.readAt) return;
+  if (portable(n.session) || n.harness && n.harness !== "claude" && n.harness !== "codex") {
+    update(id, (x2) => step(x2, { what: "available" }));
+    return;
+  }
+  if (n.harness !== "codex" && !isOpen(n.session)) {
+    update(id, (x2) => step(x2, { what: "waiting" }));
+    return;
+  }
+  carrying.add(id);
+  try {
+    const { json, err } = await scout(["session", "send", n.session, message(n), ...n.harness === "codex" ? ["--harness", "codex"] : []]);
+    update(id, (x2) => {
+      if (json?.ok) {
+        step(x2, { what: "sent", how: json.delivery || json.route || json.host || null });
+        x2.sentAt = Date.now();
+      } else if (json?.code === "not_live") step(x2, { what: "waiting" });
+      else {
+        step(x2, { what: "failed", why: json?.code || json?.error?.message || json?.error || err || "no answer from scout" });
+        x2.tries = (x2.tries || 0) + 1;
+      }
+    });
+  } finally {
+    carrying.delete(id);
+  }
+}
+async function handOff(id) {
+  const n = load$1().find((x2) => x2.id === id);
+  if (!n || portable(n.session) || n.harness && n.harness !== "claude") return null;
+  const { json, err } = await scout(["ask", "--project", n.cwd, "--harness", "claude", "--label", "scout-studio", message(n)], 12e4);
+  const ok = json && json.ok !== false && json.receipt?.ok !== false;
+  return update(id, (x2) => {
+    if (ok) step(x2, { what: "handed", task: json.receipt?.taskId || json.taskId || json.handle || null });
+    else step(x2, { what: "failed", why: json?.receipt?.reason || json?.error?.message || json?.error || err || "Scout refused it" });
+  });
+}
+async function notes() {
+  return Promise.all(load$1().map(async (n) => {
+    const s = n.trail.some((t) => t.what === "sent") ? await stateOf(n.session) : null;
+    return { ...n, arrivedAt: n.readAt || s?.arrived[n.id] || null, answers: [...s?.answers[n.id] || [], ...n.directAnswers || []].sort((a, b2) => a.at - b2.at) };
+  }));
+}
+function feedback(session, note, reply) {
+  if (!session || typeof session !== "string") throw Error("Choose a session.");
+  const list = load$1();
+  const mine = list.filter((n) => n.session === session);
+  if (note !== void 0 || reply !== void 0) {
+    const n = mine.find((n2) => n2.id === note);
+    if (!n || typeof reply !== "string" || !reply.trim()) throw Error("Give a note from this session and a reply.");
+    const text = reply.trim().slice(0, 4e3);
+    n.directAnswers ||= [];
+    if (n.directAnswers.at(-1)?.text !== text) n.directAnswers.push({ text, at: Date.now() });
+  }
+  const unread = mine.filter((n) => !n.readAt);
+  for (const n of unread) n.readAt = Date.now();
+  if (unread.length || note) save$1(list);
+  return mine.map((n) => ({
+    id: n.id,
+    text: n.text,
+    screen: n.screen,
+    x: n.x,
+    y: n.y,
+    at: n.at,
+    pointer: n.re,
+    answering: n.reSay,
+    replies: n.directAnswers || []
+  }));
+}
+function addNote({ session, harness, project, cwd, screen, x: x2, y: y2, text, re: re2, reSay }) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(session || "") || !screen?.hash || typeof text !== "string" || !text.trim()) return null;
+  const n = {
+    id: `n_${crypto.randomBytes(5).toString("hex")}`,
+    session,
+    harness,
+    project: project || "",
+    cwd: cwd || "",
+    screen: { hash: screen.hash, ext: screen.ext || "png", w: screen.w, h: screen.h, url: screen.url || null, file: screen.file || null },
+    x: Math.min(1, Math.max(0, Number(x2) || 0)),
+    y: Math.min(1, Math.max(0, Number(y2) || 0)),
+    text: text.trim().slice(0, 4e3),
+    at: Date.now(),
+    trail: [],
+    // a reply to a pointer the session made: the session hears what it is an answer to
+    ...typeof re2 === "string" && /^p_[a-z0-9]+$/.test(re2) ? { re: re2, reSay: String(reSay || "").slice(0, 2e3) } : {}
+  };
+  materialize(n.screen.hash, n.screen.ext);
+  save$1([...load$1(), n]);
+  deliver(n.id);
+  return n;
+}
+function retry(id) {
+  update(id, (x2) => {
+    x2.tries = 0;
+  });
+  return deliver(id);
+}
+function keep(id, kept = true) {
+  return update(id, (x2) => {
+    x2.kept = kept;
+  });
+}
+function remove(id) {
+  save$1(load$1().filter((x2) => x2.id !== id));
+}
+let timer$1 = null;
+function startSweep() {
+  if (timer$1) return;
+  timer$1 = setInterval(() => {
+    for (const n of load$1()) {
+      const last = n.trail.at(-1)?.what;
+      if (!n.kept && !n.readAt && last !== "available" && last !== "sent" && last !== "handed" && !(last === "failed" && n.tries >= 6)) deliver(n.id);
+    }
+  }, 2e4);
+  timer$1.unref?.();
+}
+function findSession({ session: id }) {
+  if (typeof id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,160}$/.test(id)) return null;
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(CLAUDE_PROJECTS);
+  } catch {
+  }
+  for (const d of dirs) {
+    const file = path.join(CLAUDE_PROJECTS, d, `${id}.jsonl`);
+    if (fs.existsSync(file)) return { id, file };
+  }
+  const codex = codexFiles(0, id)[0];
+  return { id, file: codex?.file || null };
+}
+async function screensFor({ id, file }) {
+  const shared = sharedScreens(id);
+  if (!file) return shared;
+  const files = [file];
+  const sub = path.join(path.dirname(file), id, "subagents");
+  try {
+    for (const n of fs.readdirSync(sub)) if (n.endsWith(".jsonl")) files.push(path.join(sub, n));
+  } catch {
+  }
+  const all = [...shared];
+  for (const f of files) {
+    const s = await readTranscript(f, id);
+    if (s) all.push(...screensOf$1(s));
+  }
+  return all.sort((a, b2) => b2.at - a.at);
+}
+function pickScreen(screens, which = "latest") {
+  if (!screens.length) return null;
+  if (!which || which === "latest") return screens[0];
+  if (/^[0-9a-f]{4,16}$/.test(which)) {
+    const s = screens.find((x2) => x2.hash.startsWith(which));
+    if (s) return s;
+  }
+  if (/^https?:\/\//.test(which) || /^[\w.-]+:\d+/.test(which)) {
+    const s = screens.find((x2) => x2.url && (x2.url === which || x2.url.includes(which.replace(/^https?:\/\//, ""))));
+    if (s) return s;
+  }
+  const abs = path.resolve(which);
+  return screens.find((x2) => x2.file === abs) || screens.find((x2) => x2.file && path.basename(x2.file) === path.basename(which)) || null;
+}
+function load() {
+  try {
+    return JSON.parse(fs.readFileSync(POINTERS, "utf8"));
+  } catch {
+    return [];
+  }
+}
+function save(list) {
+  fs.mkdirSync(HOME, { recursive: true });
+  const tmp = `${POINTERS}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(list, null, 1));
+  fs.renameSync(tmp, POINTERS);
+}
+async function screensOf(session, limit = 12) {
+  if (!session) return null;
+  const s = findSession({ session });
+  if (!s) return null;
+  return (await screensFor(s)).slice(0, limit).map(brief);
+}
+const brief = (sc) => ({
+  id: sc.hash,
+  ext: sc.ext,
+  at: new Date(sc.at).toISOString(),
+  w: sc.w,
+  h: sc.h,
+  page: sc.url || null,
+  file: sc.file || null,
+  tool: sc.tool,
+  settled: !sc.open,
+  said: (sc.caption || "").slice(0, 160)
+});
+function boxOf({ x: x2, y: y2, w: w2 = 0, h = 0, unit = "px" }, screen) {
+  const n = [x2, y2, w2, h].map(Number);
+  if (n.some((v2) => !Number.isFinite(v2) || v2 < 0)) throw new Error("x, y, w and h must be numbers, 0 or more");
+  if (unit !== "px" && unit !== "fraction") throw new Error('unit is "px" or "fraction"');
+  const [fx, fy, fw, fh] = unit === "px" ? [n[0] / screen.w, n[1] / screen.h, n[2] / screen.w, n[3] / screen.h] : n;
+  if (fx > 1 || fy > 1 || fx + fw > 1.001 || fy + fh > 1.001) {
+    throw new Error(`that falls outside the screen, which is ${screen.w}×${screen.h} px`);
+  }
+  const r = (v2) => Math.round(v2 * 1e4) / 1e4;
+  return { x: r(fx), y: r(fy), w: r(fw), h: r(fh) };
+}
+async function addPointer({ session, screen = "latest", at, say }) {
+  if (!session) throw new Error("a pointer needs the session it comes from");
+  const s = findSession({ session });
+  if (!s) throw new Error("Invalid session.");
+  const screens = await screensFor(s);
+  if (!screens.length) throw new Error("this session has no screens yet; take a screenshot first");
+  const sc = pickScreen(screens, screen);
+  if (!sc) throw new Error(`no screen "${screen}" in this session; list them with the screens tool`);
+  const box = boxOf(at || {}, sc);
+  if (!materialize(sc.hash, sc.ext)) throw new Error("couldn't keep a copy of that screen");
+  const p = {
+    id: `p_${crypto.randomBytes(5).toString("hex")}`,
+    session: s.id,
+    cwd: sc.cwd || stateOf$1(s.file)?.cwd || "",
+    screen: { hash: sc.hash, ext: sc.ext, w: sc.w, h: sc.h, at: sc.at, url: sc.url || null, file: sc.file || null, tool: sc.tool, caption: sc.caption || "" },
+    box,
+    say: typeof say === "string" ? say.trim().slice(0, 2e3) : "",
+    at: Date.now(),
+    seenAt: null
+  };
+  save([...load(), p]);
+  return p;
+}
+async function pointer(id) {
+  const p = load().find((x2) => x2.id === id);
+  if (!p) return null;
+  const replies = (await notes()).filter((n) => n.re === id).map((n) => ({ at: n.at, text: n.text, note: n.id }));
+  return { ...p, replies };
+}
+async function pointersOf(session) {
+  const all = await notes();
+  return load().filter((p) => p.session === session).sort((a, b2) => b2.at - a.at).map((p) => ({
+    ...p,
+    replies: all.filter((n) => n.re === p.id).map((n) => ({ at: n.at, text: n.text, note: n.id }))
+  }));
+}
+function markSeen(id) {
+  const list = load();
+  const p = list.find((x2) => x2.id === id);
+  if (p && !p.seenAt) {
+    p.seenAt = Date.now();
+    save(list);
+  }
+  return p || null;
+}
 const WRITE_GAP = 800;
 const READ_GAP = 450;
 const TICK = 1e4;
 const subs = /* @__PURE__ */ new Map();
 const sent = /* @__PURE__ */ new Map();
 const changed = /* @__PURE__ */ new Set();
-let timer = null, busy = false, watcher = null, ticker = null, offShows = null;
+let timer = null, busy = false, watchers = [], ticker = null, offShows = null;
 const frame = (d) => `event: canvas
 data: ${JSON.stringify(d)}
 
@@ -3428,20 +4365,30 @@ async function flush() {
 }
 function start() {
   if (ticker) return;
-  try {
-    watcher = fs.watch(CLAUDE_PROJECTS, { recursive: true }, (_2, name) => {
-      if (!name || !String(name).endsWith(".jsonl")) return;
-      changed.add(path.join(CLAUDE_PROJECTS, String(name)));
-      soon(WRITE_GAP);
-    });
-  } catch {
+  for (const root2 of watchableRoots()) {
+    try {
+      const w2 = fs.watch(root2, { recursive: true }, (_2, name) => {
+        if (!name) return;
+        const s = String(name);
+        if (s.endsWith(".jsonl")) changed.add(path.join(root2, s));
+        else if (!/\.(json|html?|md|png|jpe?g|webp|gif)$/i.test(s)) return;
+        soon(WRITE_GAP);
+      });
+      watchers.push(w2);
+    } catch {
+    }
   }
   offShows = onShows(() => soon(50));
   ticker = setInterval(() => soon(0), TICK);
 }
 function stop() {
-  watcher?.close();
-  watcher = null;
+  for (const w2 of watchers) {
+    try {
+      w2.close();
+    } catch {
+    }
+  }
+  watchers = [];
   offShows?.();
   offShows = null;
   clearInterval(ticker);
@@ -3540,6 +4487,15 @@ async function handle(req, res) {
     }
     const sv = p.match(/^\/api\/shows\/([0-9a-f-]{36})\/view$/);
     if (sv && req.method === "GET") {
+      const localShow = localShowById(sv[1]);
+      if (localShow) {
+        const bytes = localShowBytes(localShow.id);
+        if (!bytes) return send(res, 404, { error: "file is no longer available" }), true;
+        const out2 = viewResponse({ ...localShow, view: viewOf(localShow), name: path.basename(localShow.sourcePath) }, bytes);
+        res.writeHead(out2.status, out2.headers);
+        res.end(out2.body);
+        return true;
+      }
       let show = showById(sv[1]);
       if (!show && url.searchParams.get("root")) {
         await showsFor([url.searchParams.get("root")]);

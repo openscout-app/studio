@@ -12,6 +12,7 @@ import { canvas } from "./sessions.mjs";
 import { addNote, feedback, handOff, keep, notes, remove, retry, startSweep } from "./notes.mjs";
 import { addPointer, markSeen, pointer, pointersOf, screensOf } from "./pointers.mjs";
 import { showById, showBytes, showsFor, viewOf } from "./runtime.mjs";
+import { localShowById, localShowBytes } from "./artifacts.mjs";
 import { viewResponse } from "./show-view.mjs";
 import { events } from "./live.mjs";
 
@@ -127,9 +128,18 @@ export async function handle(req, res) {
       const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 4));
       return send(res, 200, await canvas(hours)), true;
     }
-    // a shown file, from the runtime, made into a page the reader frames
+    // a shown file, from the runtime or auto-discovered on disk, made into a page the reader frames
     const sv = p.match(/^\/api\/shows\/([0-9a-f-]{36})\/view$/);
     if (sv && req.method === "GET") {
+      const localShow = localShowById(sv[1]);
+      if (localShow) {
+        const bytes = localShowBytes(localShow.id);
+        if (!bytes) return send(res, 404, { error: "file is no longer available" }), true;
+        const out = viewResponse({ ...localShow, view: viewOf(localShow), name: path.basename(localShow.sourcePath) }, bytes);
+        res.writeHead(out.status, out.headers);
+        res.end(out.body);
+        return true;
+      }
       let show = showById(sv[1]);
       if (!show && url.searchParams.get("root")) { await showsFor([url.searchParams.get("root")]); show = showById(sv[1]); }
       if (!show) return send(res, 404, { error: "Scout's runtime has no such shown file" }), true;
