@@ -1,18 +1,20 @@
 // Safe discovery of file-backed screens, agent-written HTML/Markdown documents, and workspace
-// visual studies. Every file read from disk is verified with realpath containment against the
-// session's project root (or Studio's own local capture roots), so transcripts cannot point Studio
-// at arbitrary host files.
+// visual studies. Every file read from disk is verified with O_NOFOLLOW, nlink === 1, secret-path
+// denial, and realpath containment against the session's project root (or Studio's own local
+// capture roots), so transcripts cannot point Studio at arbitrary host files.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { HOME, IMG } from "./paths.mjs";
 import { imageSize } from "./image-size.mjs";
+import { deriveSurfaceSubject } from "./runtime.mjs";
 import { frontmatter } from "./show-view.mjs";
 
 const MIN_W = 320, MIN_H = 200;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_DOC_BYTES = 8 * 1024 * 1024;
+const OPEN_SAFE_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
 const IMG_EXT = /\.(png|jpe?g|webp|gif)$/i;
 const HTML_EXT = /\.html?$/i;
 const MD_EXT = /\.(md|markdown|mdx)$/i;
@@ -20,6 +22,8 @@ const BOILERPLATE_MD = /^(readme|agents|claude|gemini|skill|changelog|contributi
 const DOC_NAME_HINT = /(?:plan|review|design|spec|brief|audit|roadmap|proposal|one[-_]?pager|dossier|study|notes|architecture|walkthrough|report)/i;
 const DOC_DIR_HINT = /(?:^|\/)(?:plans|reviews|research|docs|artifacts|design|studies|notes|specs)(?:\/|$)/i;
 const BUILD_DIR_RE = /(?:^|\/)(?:node_modules|\.git|dist|build|\.next|out|coverage|vendor|\.turbo|\.vercel|\.cache)(?:\/|$)/;
+const SECRET_SEG_RE = /(?:^|\/)(?:\.ssh|\.aws|\.gnupg|\.kube|\.config\/gcloud)(?:\/|$)/i;
+const SECRET_FILE_RE = /^(?:\.env(?:\..+)?|\.npmrc|\.netrc|\.pypirc|id_rsa(?:\..+)?|id_ed25519(?:\..+)?|credentials(?:\..+)?|.*\.(?:pem|key|p12|pfx))$/i;
 const SHELL_CAPTURE_RE = /\b(?:scout\s+browser\s+screenshot|agent-browser\s+screenshot|playwright\s+screenshot|screencapture|action\s+(?:.*\s+)?capture)\b/i;
 const SCREENSHOT_TOOL_RE = /(?:screenshot|screencapture|capture_screen|save_screen)/i;
 
@@ -38,6 +42,32 @@ const FORBIDDEN_EXACT = new Set([
 function safeRealpath(p) {
   if (!p || typeof p !== "string") return null;
   try { return fs.realpathSync(p); } catch { return null; }
+}
+
+function isSecretPath(p) {
+  const normalized = String(p || "").split(path.sep).join("/");
+  if (SECRET_SEG_RE.test(normalized)) return true;
+  return SECRET_FILE_RE.test(path.basename(normalized));
+}
+
+function readSafeFile(realPath, maxBytes) {
+  let fd;
+  try {
+    fd = fs.openSync(realPath, OPEN_SAFE_FLAGS);
+  } catch {
+    return null;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.nlink > 1 || st.size <= 0 || st.size > maxBytes) return null;
+    const buf = Buffer.alloc(st.size);
+    const read = fs.readSync(fd, buf, 0, st.size, 0);
+    return { bytes: buf.subarray(0, read), st };
+  } catch {
+    return null;
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+  }
 }
 
 /** True only when `dir` is a specific project/worktree directory, never $HOME or a broad system root. */
@@ -80,7 +110,7 @@ export function allowedRootsFor(cwd, extraRoots = []) {
   return [...roots];
 }
 
-/** Resolves `candidate` (relative to `cwd` if needed) only if its realpath sits inside `allowedRoots`. */
+/** Resolves `candidate` (relative to `cwd` if needed) only if non-symlink, non-secret, and realpath-contained. */
 export function resolveContainedFile(candidate, cwd, allowedRoots) {
   if (!candidate || typeof candidate !== "string") return null;
   let cleaned = candidate.trim().replace(/^['"`]|['"`]$/g, "");
@@ -91,9 +121,14 @@ export function resolveContainedFile(candidate, cwd, allowedRoots) {
     cleaned = path.join(os.homedir(), cleaned.slice(2));
   }
   const resolved = path.isAbsolute(cleaned) ? cleaned : cwd ? path.resolve(cwd, cleaned) : null;
-  if (!resolved) return null;
+  if (!resolved || isSecretPath(resolved)) return null;
+  try {
+    if (fs.lstatSync(resolved).isSymbolicLink()) return null;
+  } catch {
+    return null;
+  }
   const real = safeRealpath(resolved);
-  if (!real || BUILD_DIR_RE.test(real)) return null;
+  if (!real || BUILD_DIR_RE.test(real) || isSecretPath(real)) return null;
   for (const root of allowedRoots) {
     if (real === root || real.startsWith(root + path.sep)) return real;
   }
@@ -106,16 +141,22 @@ const ingestedImages = new Map(); // `${realPath}:${mtimeMs}:${size}` -> screen 
 export function ingestImageFile(filePath, cwd, allowedRoots, meta = {}) {
   const real = resolveContainedFile(filePath, cwd, allowedRoots);
   if (!real || !IMG_EXT.test(real)) return null;
-  let st;
-  try { st = fs.statSync(real); } catch { return null; }
-  if (!st.isFile() || st.size <= 0 || st.size > MAX_IMAGE_BYTES) return null;
+  const opened = readSafeFile(real, MAX_IMAGE_BYTES);
+  if (!opened) return null;
+  const { bytes, st } = opened;
   const cacheKey = `${real}:${Math.floor(st.mtimeMs)}:${st.size}`;
   if (ingestedImages.has(cacheKey)) {
     const hit = ingestedImages.get(cacheKey);
-    return hit ? { ...hit, ...meta, at: meta.at || hit.at } : null;
+    if (!hit) return null;
+    const provenance = meta.provenance || hit.provenance || "captured";
+    const subject = meta.subject || deriveSurfaceSubject({
+      url: meta.url || hit.url,
+      sourcePath: real,
+      projectRoot: meta.projectRoot || cwd || path.dirname(real),
+      kind: "screen",
+    });
+    return { ...hit, ...meta, provenance, subject, at: meta.at || hit.at };
   }
-  let bytes;
-  try { bytes = fs.readFileSync(real); } catch { return null; }
   const size = imageSize(bytes);
   if (!size || size.w < MIN_W || size.h < MIN_H) {
     ingestedImages.set(cacheKey, null);
@@ -123,6 +164,7 @@ export function ingestImageFile(filePath, cwd, allowedRoots, meta = {}) {
   }
   const ext = bytes[0] === 0xff ? "jpg" : bytes[0] === 0x89 ? "png" : bytes[0] === 0x47 ? "gif" : "webp";
   const hash = crypto.createHash("sha1").update(bytes.toString("base64")).digest("hex").slice(0, 16);
+  const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   const dest = path.join(IMG, `${hash}.${ext}`);
   if (!fs.existsSync(dest)) {
     fs.mkdirSync(IMG, { recursive: true });
@@ -136,15 +178,25 @@ export function ingestImageFile(filePath, cwd, allowedRoots, meta = {}) {
   }
   const base = {
     hash,
+    sha256,
     ext,
     w: size.w,
     h: size.h,
     at: Math.floor(st.mtimeMs),
     file: real,
     url: null,
+    provenance: "captured",
+    revision: 1,
   };
   ingestedImages.set(cacheKey, base);
-  return { ...base, ...meta, at: meta.at || base.at };
+  const provenance = meta.provenance || "captured";
+  const subject = meta.subject || deriveSurfaceSubject({
+    url: meta.url,
+    sourcePath: real,
+    projectRoot: meta.projectRoot || cwd || path.dirname(real),
+    kind: "screen",
+  });
+  return { ...base, ...meta, provenance, subject, at: meta.at || base.at };
 }
 
 // ---- Local Show registry (HTML studies, Markdown plans/reviews, brain artifacts)
@@ -157,15 +209,12 @@ function localShowUuid(realPath) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
-function sniffDocCaption(realPath, view, mtimeMs, size) {
+function sniffDocCaption(realPath, view, mtimeMs, size, headBytes) {
   const key = `${realPath}:${Math.floor(mtimeMs)}:${size}`;
   if (captionCache.has(key)) return captionCache.get(key);
   let caption = "";
   try {
-    const fd = fs.openSync(realPath, "r");
-    const buf = Buffer.alloc(Math.min(4096, size));
-    try { fs.readSync(fd, buf, 0, buf.length, 0); } finally { fs.closeSync(fd); }
-    const head = buf.toString("utf8");
+    const head = headBytes.subarray(0, Math.min(4096, headBytes.length)).toString("utf8");
     if (view === "html") {
       const m = /<title[^>]*>([^<]+)<\/title>/i.exec(head);
       if (m?.[1]?.trim()) caption = m[1].trim().slice(0, 72);
@@ -179,15 +228,11 @@ function sniffDocCaption(realPath, view, mtimeMs, size) {
   return caption;
 }
 
-function isVisualHtmlCandidate(realPath, projectRoot) {
+function isVisualHtmlCandidate(realPath, projectRoot, headText) {
   if (!HTML_EXT.test(realPath) || BUILD_DIR_RE.test(realPath)) return false;
   const base = path.basename(realPath).toLowerCase();
   if (base === "index.html" && projectRoot && path.dirname(realPath) === projectRoot) {
-    // Skip Vite/Next app entry shells at repository root that only mount a JS bundle.
-    try {
-      const head = fs.readFileSync(realPath, "utf8").slice(0, 2048);
-      if (/src=["']\/?src\/main\.[jt]sx?["']/i.test(head)) return false;
-    } catch { return false; }
+    if (/src=["']\/?src\/main\.[jt]sx?["']/i.test(headText.slice(0, 2048))) return false;
   }
   return true;
 }
@@ -207,14 +252,15 @@ export function registerLocalShow(filePath, cwd, allowedRoots, opts = {}) {
   if (!real) return null;
   const allowedRoot = allowedRoots.find((r) => real === r || real.startsWith(r + path.sep));
   if (!allowedRoot) return null;
-  let st;
-  try { st = fs.statSync(real); } catch { return null; }
-  if (!st.isFile() || st.size <= 0 || st.size > MAX_DOC_BYTES) return null;
+  const opened = readSafeFile(real, MAX_DOC_BYTES);
+  if (!opened) return null;
+  const { bytes, st } = opened;
+  const headText = bytes.subarray(0, Math.min(4096, bytes.length)).toString("utf8");
 
   const projectRoot = opts.projectRoot || allowedRoot;
   let view = null;
   let mediaType = "application/octet-stream";
-  if (isVisualHtmlCandidate(real, projectRoot)) {
+  if (isVisualHtmlCandidate(real, projectRoot, headText)) {
     view = "html";
     mediaType = "text/html";
   } else if (isEditorialMarkdownCandidate(real, Boolean(opts.fromBrain))) {
@@ -225,10 +271,13 @@ export function registerLocalShow(filePath, cwd, allowedRoots, opts = {}) {
   }
 
   const id = localShowUuid(real);
-  const caption = opts.caption || sniffDocCaption(real, view, st.mtimeMs, st.size);
+  const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+  const caption = opts.caption || sniffDocCaption(real, view, st.mtimeMs, st.size, bytes);
+  const provenance = opts.provenance || "written";
+  const subject = deriveSurfaceSubject({ sourcePath: real, projectRoot, kind: view });
   const show = {
     id,
-    itemId: id,
+    itemId: subject.key,
     sessionId: opts.sessionId || null,
     agentId: opts.agentId || opts.harness || "local",
     harness: opts.harness || null,
@@ -241,10 +290,14 @@ export function registerLocalShow(filePath, cwd, allowedRoots, opts = {}) {
     view,
     mediaType,
     size: st.size,
+    sha256,
     caption,
     at: opts.at || Math.floor(st.mtimeMs),
     createdAt: opts.at || Math.floor(st.mtimeMs),
-    versions: 1,
+    versions: opts.versions || 1,
+    revision: opts.revision || 1,
+    provenance,
+    subject,
     local: true,
   };
   localShows.set(id, { show, realPath: real, allowedRoot });
@@ -257,10 +310,15 @@ export function localShowById(id) {
 
 export function localShowBytes(id) {
   const entry = localShows.get(id);
-  if (!entry) return null;
+  if (!entry || isSecretPath(entry.realPath)) return null;
+  try {
+    if (fs.lstatSync(entry.realPath).isSymbolicLink()) return null;
+  } catch {
+    return null;
+  }
   const real = safeRealpath(entry.realPath);
-  if (!real || !(real === entry.allowedRoot || real.startsWith(entry.allowedRoot + path.sep))) return null;
-  try { return fs.readFileSync(real); } catch { return null; }
+  if (!real || isSecretPath(real) || !(real === entry.allowedRoot || real.startsWith(entry.allowedRoot + path.sep))) return null;
+  return readSafeFile(real, MAX_DOC_BYTES)?.bytes || null;
 }
 
 // ---- Tool-call extraction (screenshots written by CLI/tools + HTML/Markdown written by tools)
@@ -282,7 +340,6 @@ export function extractToolArtifacts(toolName, input = {}, outputText = "", rawP
   const screenshots = [];
   const docs = [];
 
-  // 1. Explicit screenshot tools
   if (SCREENSHOT_TOOL_RE.test(name)) {
     for (const k of ["path", "outputPath", "file_path", "file", "filename", "Path", "TargetFile"]) {
       if (typeof input[k] === "string") screenshots.push(input[k]);
@@ -290,14 +347,12 @@ export function extractToolArtifacts(toolName, input = {}, outputText = "", rawP
     screenshots.push(...extractImageTokens(outputText));
   }
 
-  // 2. Shell commands running a screenshot/capture CLI
   const cmd = String(input.command || input.CommandLine || input.cmd || "");
   if (cmd && SHELL_CAPTURE_RE.test(cmd)) {
     screenshots.push(...extractImageTokens(cmd));
     screenshots.push(...extractImageTokens(outputText));
   }
 
-  // 3. File-writing tools producing HTML studies or Markdown plans/reviews
   if (/^(?:Write|Edit|MultiEdit|write_file|edit_file|create_file|replace_file_content)$/i.test(name)) {
     const target = input.file_path || input.path || input.Path || input.TargetFile;
     if (typeof target === "string") docs.push(target);
@@ -366,8 +421,8 @@ export function discoverWorkspaceArtifacts(roots, since) {
     const recent = [];
     for (const file of new Set(candidates)) {
       try {
-        const st = fs.statSync(file);
-        if (st.mtimeMs >= since && st.size > 0) recent.push({ file, mtimeMs: st.mtimeMs });
+        const st = fs.lstatSync(file);
+        if (st.isFile() && st.mtimeMs >= since && st.size > 0) recent.push({ file, mtimeMs: st.mtimeMs });
       } catch {}
     }
     recent.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -382,6 +437,8 @@ export function discoverWorkspaceArtifacts(roots, since) {
             tool: "workspace",
             caption: path.basename(item.file),
             open: false,
+            provenance: "workspace",
+            projectRoot: realRoot,
           });
           if (sc) screens.push(sc);
         }
@@ -390,6 +447,7 @@ export function discoverWorkspaceArtifacts(roots, since) {
           projectRoot: realRoot,
           worktree: realRoot,
           harness: "scout",
+          provenance: "workspace",
           at: Math.floor(item.mtimeMs),
         });
         if (sh) shows.push(sh);

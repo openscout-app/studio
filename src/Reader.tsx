@@ -1,8 +1,16 @@
-// The reader: one shown file, or a master-detail reading room for a turn's N markdowns.
+// The reader: one surface or shown file, or a master-detail reading room for a turn's N markdowns.
 // Pictures and video sit on the stage; documents and pages are framed from Studio's server,
 // which serves each one sandboxed, so nothing in an agent's file can reach Studio or send a note.
 import { useEffect, useState } from "react";
-import { ago, showView, type Show } from "./api";
+import {
+  ago,
+  provenanceLabel,
+  provenanceOfShow,
+  provenanceVerb,
+  revisionOf,
+  showView,
+  type Show,
+} from "./api";
 import { docTitle } from "./folio";
 
 export function Reader({
@@ -52,6 +60,8 @@ export function Reader({
   }, [index, list, multi, onClose, onSelect]);
 
   const src = showView(show);
+  const prov = provenanceOfShow(show);
+  const rev = revisionOf(show);
   const where = [show.worktree.replace(/^\/Users\/[^/]+/, "~"), show.branch].filter(Boolean).join(" · ");
 
   return (
@@ -80,7 +90,13 @@ export function Reader({
           </div>
         )}
         <span className="title">{docTitle(show)}</span>
-        <span className="where">{where} · shown {ago(show.at)}{show.versions > 1 ? ` · ${show.versions} versions` : ""}</span>
+        <span className="surface-prov-badge" data-provenance={prov}>{provenanceLabel(prov)}</span>
+        {rev > 1 && <span className="surface-rev-badge">v{rev}</span>}
+        <span className="where">
+          {where ? `${where} · ` : ""}
+          {provenanceVerb(prov)} {ago(show.at)}
+          {rev > 1 ? ` · ${rev} revisions` : ""}
+        </span>
         <a className="s-ds-btn s-ds-btn--secondary" href={src} target="_blank" rel="noreferrer">Open in a tab</a>
       </div>
 
@@ -95,6 +111,7 @@ export function Reader({
               {list.map((item, i) => {
                 const active = item.id === show.id;
                 const seen = visited.has(item.id);
+                const itemRev = revisionOf(item);
                 return (
                   <button
                     key={item.id}
@@ -105,7 +122,11 @@ export function Reader({
                   >
                     <span className="reader-rail-num">{String(i + 1).padStart(2, "0")}</span>
                     <span className="reader-rail-title">{docTitle(item)}</span>
-                    {!seen && <span className="reader-rail-dot" aria-label="Unread" />}
+                    {itemRev > 1 ? (
+                      <span className="library-rev-badge">v{itemRev}</span>
+                    ) : !seen ? (
+                      <span className="reader-rail-dot" aria-label="Unread" />
+                    ) : null}
                   </button>
                 );
               })}

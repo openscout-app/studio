@@ -65,8 +65,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [query, setQuery] = useState(() => startParams.get("q") || "");
-  const { pathname, search: locSearch } = useBrowserLocation();
-  const isLibrary = !embedded && (pathname === "/library" || pathname.startsWith("/library/") || new URLSearchParams(locSearch).get("view") === "library");
+  const { pathname } = useBrowserLocation();
+  const isLibrary = !embedded && (pathname === "/library" || pathname.startsWith("/library/") || new URLSearchParams(location.search).get("view") === "library");
   const [reading, setReading] = useState<{ show: Show; shows?: Show[] } | null>(null);
   const [fanned, setFanned] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<Filter>(

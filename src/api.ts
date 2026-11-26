@@ -1,29 +1,84 @@
 // What the server sends, and the calls the page makes.
+export type SurfaceProvenance = "shown" | "captured" | "written" | "workspace";
+
+export type SurfaceSubject = {
+  key: string;
+  kind: "page" | "window" | "file";
+  label: string;
+};
+
 export type Screen = {
   id: string; hash: string; ext: string; w: number; h: number; at: number;
   tool: string; url: string | null; file: string | null; caption: string;
   before: { hash: string; ext: string; at: number } | null; open: boolean;
+  provenance?: SurfaceProvenance;
+  revision?: number;
+  supersedes?: string;
+  subject?: SurfaceSubject;
+  surfaceId?: string;
 };
+
 export type Session = {
   id: string; harness?: string; cwd: string; branch: string; title: string; prompt: string;
   firstAt: number; lastAt: number; open: boolean; working: boolean; attention: unknown;
   /** what it did last, in a few words */
   now: string | null;
   screens: Screen[];
-  /** files an agent put in front of the person with `scout show`, from Scout's runtime */
+  /** shown, written, or workspace documents and visual studies associated with this session */
   shows: Show[];
 };
-/** A shown file: the latest version of one file an agent showed, kept by Scout's runtime. */
+
+/** A document or visual surface: shown via `scout show`, written in a turn, or observed in workspace. */
 export type Show = {
   id: string; itemId: string; sessionId: string | null; agentId: string; harness: string | null;
   projectRoot: string; worktree: string; branch: string; path: string; name: string;
   view: "image" | "video" | "markdown" | "html" | "pdf" | "text" | "file";
   mediaType: string; size: number; caption: string; at: number; versions: number;
+  provenance?: SurfaceProvenance;
+  revision?: number;
+  supersedes?: string;
+  subject?: SurfaceSubject;
 };
-export const showView = (s: Show) => `/api/shows/${s.id}/view?root=${encodeURIComponent(s.projectRoot)}`;
+
+export const showView = (s: Show) => `/api/shows/${encodeURIComponent(s.id)}/view?root=${encodeURIComponent(s.projectRoot)}`;
+
+export function provenanceOfShow(show: Pick<Show, "provenance">): SurfaceProvenance {
+  return show.provenance ?? "shown";
+}
+
+export function provenanceOfScreen(screen: Pick<Screen, "provenance" | "tool">): SurfaceProvenance {
+  if (screen.provenance) return screen.provenance;
+  return screen.tool === "workspace" ? "workspace" : "captured";
+}
+
+export function provenanceLabel(p: SurfaceProvenance): "Shown" | "Captured" | "Written" | "Workspace" {
+  if (p === "shown") return "Shown";
+  if (p === "written") return "Written";
+  if (p === "workspace") return "Workspace";
+  return "Captured";
+}
+
+export function provenanceVerb(p: SurfaceProvenance): "shown" | "captured" | "written" | "observed" {
+  if (p === "shown") return "shown";
+  if (p === "written") return "written";
+  if (p === "workspace") return "observed";
+  return "captured";
+}
+
+export function revisionOf(item: { revision?: number; versions?: number; before?: unknown }): number {
+  return Math.max(item.revision ?? 1, item.versions ?? 1, item.before ? 2 : 1);
+}
+
 export type Project = { name: string; root: string; sessions: Session[] };
 export type Loading = { done: boolean; first: boolean; read: number; total: number; sessions: number };
-export type CanvasData = { at: number; hours: number; scout: { up: boolean; url?: string; shows?: number }; projects: Project[]; loading: Loading };
+export type SurfaceCounts = { items: number; subjects: number; shown: number; captured: number; written: number; workspace: number };
+export type CanvasData = {
+  at: number;
+  hours: number;
+  scout: { up: boolean; observedSurfaces?: boolean; url?: string; shows?: number; counts?: SurfaceCounts };
+  projects: Project[];
+  loading: Loading;
+};
 
 export type Step = { what: "available" | "waiting" | "failed" | "sent" | "handed"; at: number; why?: string; how?: string | null; task?: string | null };
 export type Note = {

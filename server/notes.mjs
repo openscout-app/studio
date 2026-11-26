@@ -14,6 +14,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { HOME, IMG, NOTES, findScout } from "./paths.mjs";
 import { portable } from "./shared-screens.mjs";
 import { isOpen, stateOf } from "./sessions.mjs";
+import { materializeRuntimeScreen } from "./runtime.mjs";
 import { materialize } from "./transcripts.mjs";
 
 let listeners = new Set();
@@ -99,6 +100,7 @@ export async function deliver(id) {
   }
   carrying.add(id);
   try {
+    await materializeRuntimeScreen(n.screen.hash, n.screen.ext);
     const { json, err } = await scout(["session", "send", n.session, message(n), ...(n.harness === "codex" ? ["--harness", "codex"] : [])]);
     update(id, (x) => {
       if (json?.ok) { step(x, { what: "sent", how: json.delivery || json.route || json.host || null }); x.sentAt = Date.now(); }
