@@ -37,9 +37,16 @@ Studio uses:
 - Scout's runtime at `127.0.0.1:43110`, for session titles and shown files (`SCOUT_RUNTIME_URL` changes it).
 - The `scout` command, to send notes with `scout session send` (`SCOUT_BIN` changes it).
 
-## Where screens come from
+## Where screens and pages come from
 
-The canvas reads Claude Code transcripts in `~/.claude/projects` and Codex rollouts in `$CODEX_HOME/sessions` (default `~/.codex/sessions`) written in the chosen window: 4 hours, 24 hours or 3 days. It opens on the last 4 hours (or the window `?hours=24` or `?hours=72` in the address names) and looks further back on its own when that holds no screens; a link to an older session widens it as far as it needs, up to a week. A screen is any image of at least 320 by 200 that a tool returned: a browser screenshot, a window screenshot, or an image file the session read. Subagents' screens belong to the session that started them. The images are copied out of the transcripts into `~/.openscout/.studio/img`, so they outlive temporary files.
+The canvas discovers local work automatically across Claude Code (`~/.claude/projects`), Codex (`$CODEX_HOME/sessions` and `~/.openai-codex/sessions`), Antigravity (`~/.gemini/antigravity*/brain`), and Kimi (`~/.kimi-code/sessions`) in the chosen window: 4 hours, 24 hours, 3 days, or 14 days. It opens on the last 4 hours (or `?hours=24`, `?hours=72`, `?hours=336`) and widens automatically up to 14 days when shorter windows hold no screens.
+
+Without any extra setup, Studio picks up:
+- Tool-returned screenshots (320×200 or larger) and shell-captured screenshots (`scout browser screenshot`, `screencapture`, Playwright, `action`) written inside the session's repository.
+- Standalone HTML studies and editorial Markdown plans/reviews written by an agent or sitting in `design/studio/`, `plans/`, `reviews/`, `artifacts/`, or `scratch/` of active repositories, plus Antigravity brain `scratch/` images and markdown artifacts.
+- Files explicitly shown through Scout's runtime (`scout show`).
+
+Subagents' screens belong to the session that started them. Images are indexed into `~/.openscout/.studio/img` so they outlive temporary files, and every file read from disk is checked with `realpath` containment against its repository root.
 
 ## Share a screen
 

@@ -6,6 +6,8 @@
 // server answers while a long transcript is still being read. An image stays in its transcript
 // until it is first shown; only where it is (which line of which file) is kept until then.
 import { codexEntry } from "./codex.mjs";
+import { antigravityEntry, kimiEntry } from "./harnesses.mjs";
+import { allowedRootsFor, extractToolArtifacts, ingestImageFile, registerLocalShow } from "./artifacts.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, said } from "./doing.mjs";
@@ -22,12 +24,13 @@ const states = new Map(); // transcript path -> parse state
 /** hash -> where its image is: { file, at (byte offset of its line), len, ext } */
 const places = new Map();
 
-function fresh(file, owner) {
+function fresh(file, owner, meta = {}) {
   return {
-    file, owner, offset: 0, carry: Buffer.alloc(0), line: null,
+    file, owner, harness: meta.harness || "claude", extraRoots: meta.brainDir ? [meta.brainDir] : [],
+    offset: 0, carry: Buffer.alloc(0), line: null,
     cwd: "", firstAt: 0, lastAt: 0, lastStop: "", openTools: 0,
     prompt: "", turn: 0, said: "", uses: new Map(),
-    screens: [], turnScreens: [], lastOf: new Map(),
+    screens: [], turnScreens: [], writtenShows: new Map(), lastOf: new Map(),
     mark: null, arrived: {}, answers: {},
     // what it did last, in a few words, and when
     now: null,
@@ -186,18 +189,36 @@ function onEntry(s, e) {
       s.openTools = Math.max(0, s.openTools - 1);
       const use = s.uses.get(r.tool_use_id) || { name: "", input: {} };
       s.uses.delete(r.tool_use_id);
-      const parts = Array.isArray(r.content) ? r.content : [];
+      const parts = Array.isArray(r.content) ? r.content : typeof r.content === "string" ? [{ type: "text", text: r.content }] : [];
       const text = textOf(parts);
+      let hadInlineImage = false;
       for (const p of parts) {
         if (p?.type !== "image" || p.source?.type !== "base64") continue;
         const img = noteImage(s, p.source.data, p.source.media_type);
         if (!img || img.w < MIN_W || img.h < MIN_H) continue;
+        hadInlineImage = true;
         const url = text.match(/"url"\s*:\s*"([^"]+)"/)?.[1] || use.input.url || null;
         s.turnScreens.push({
           hash: img.hash, ext: img.ext, w: img.w, h: img.h, at, turn: s.turn,
           tool: use.name, url, file: use.input.file_path || use.input.outputPath || null,
           subject: subjectOf(use.name, use.input, text),
         });
+      }
+      if (!hadInlineImage && (s.cwd || s.extraRoots.length)) {
+        const extracted = extractToolArtifacts(use.name, use.input, text, use.rawPatch);
+        if (extracted.screenshots.length) {
+          const allowed = allowedRootsFor(s.cwd, s.extraRoots);
+          for (const candidate of extracted.screenshots) {
+            const img = ingestImageFile(candidate, s.cwd, allowed, { at: at || Date.now() });
+            if (!img) continue;
+            const url = text.match(/"url"\s*:\s*"([^"]+)"/)?.[1] || use.input.url || null;
+            s.turnScreens.push({
+              hash: img.hash, ext: img.ext, w: img.w, h: img.h, at: img.at, turn: s.turn,
+              tool: use.name, url, file: img.file,
+              subject: subjectOf(use.name, { ...use.input, file_path: img.file }, text),
+            });
+          }
+        }
       }
     }
     return;
@@ -206,7 +227,36 @@ function onEntry(s, e) {
     s.lastStop = m.stop_reason || s.lastStop;
     if (!Array.isArray(content)) return;
     for (const b of content) {
-      if (b?.type === "tool_use") { s.uses.set(b.id, { name: b.name, input: b.input || {} }); s.openTools++; s.now = { at, text: describe(b.name, b.input || {}) }; }
+      if (b?.type === "tool_use") {
+        s.uses.set(b.id, { name: b.name, input: b.input || {}, rawPatch: b.rawPatch || "" });
+        s.openTools++;
+        s.now = { at, text: describe(b.name, b.input || {}) };
+        if (s.cwd || s.extraRoots.length) {
+          const extracted = extractToolArtifacts(b.name, b.input || {}, "", b.rawPatch || "");
+          if (extracted.docs.length || extracted.screenshots.length) {
+            const allowed = allowedRootsFor(s.cwd, s.extraRoots);
+            for (const docPath of extracted.docs) {
+              const sh = registerLocalShow(docPath, s.cwd, allowed, {
+                sessionId: s.owner,
+                harness: s.harness || "claude",
+                worktree: s.cwd,
+                at: at || undefined,
+              });
+              if (sh) s.writtenShows.set(sh.id, sh);
+            }
+            for (const shotPath of extracted.screenshots) {
+              const img = ingestImageFile(shotPath, s.cwd, allowed, { at: at || undefined });
+              if (img) {
+                s.turnScreens.push({
+                  hash: img.hash, ext: img.ext, w: img.w, h: img.h, at: img.at, turn: s.turn,
+                  tool: b.name, url: b.input?.url || null, file: img.file,
+                  subject: subjectOf(b.name, { ...(b.input || {}), file_path: img.file }, ""),
+                });
+              }
+            }
+          }
+        }
+      }
       if (b?.type === "text" && b.text?.trim()) {
         s.said = b.text;
         if (said(b.text)) s.now = { at, text: said(b.text) };
@@ -223,16 +273,18 @@ const reading = new Map(); // transcript path -> the read in progress
  * Read whatever the transcript gained since last time, a step at a time. Resolves to the state, or
  * null if the file is gone. Two reads of one file share the one in progress.
  */
-export function readTranscript(file, owner) {
-  if (!reading.has(file)) reading.set(file, read(file, owner).finally(() => reading.delete(file)));
+export function readTranscript(file, owner, meta) {
+  if (!reading.has(file)) reading.set(file, read(file, owner, meta).finally(() => reading.delete(file)));
   return reading.get(file);
 }
 
-async function read(file, owner) {
+async function read(file, owner, meta = {}) {
   let st;
   try { st = fs.statSync(file); } catch { states.delete(file); return null; }
   let s = states.get(file);
-  if (!s || st.size < s.offset) { s = fresh(file, owner); states.set(file, s); }
+  if (!s || st.size < s.offset) { s = fresh(file, owner, meta); states.set(file, s); }
+  if (meta.harness) s.harness = meta.harness;
+  if (meta.brainDir && !s.extraRoots.includes(meta.brainDir)) s.extraRoots.push(meta.brainDir);
   s.size = st.size;
   if (st.size > s.offset) {
     const fd = fs.openSync(file, "r");
@@ -250,7 +302,9 @@ async function read(file, owner) {
           if (nl === pos) continue;
           let e; try { e = JSON.parse(data.toString("utf8", pos, nl)); } catch { continue; }
           s.line = { at: base + pos, len: nl - pos };
-          if (e.payload && !e.message) e = codexEntry(e);
+          if (s.harness === "antigravity" || e.step) e = antigravityEntry(e);
+          else if (s.harness === "kimi" || String(e.type || "").startsWith("turn.") || e.type === "context.append_loop_event") e = kimiEntry(e);
+          else if (e.payload && !e.message) e = codexEntry(e);
           if (e) onEntry(s, e);
         }
         s.carry = Buffer.from(data.subarray(pos));

@@ -4,7 +4,7 @@
 // changed, and no more than about once a second while agents write.
 import fs from "node:fs";
 import path from "node:path";
-import { CLAUDE_PROJECTS } from "./paths.mjs";
+import { watchableRoots } from "./harnesses.mjs";
 import { canvas, touch } from "./sessions.mjs";
 import { onShows } from "./runtime.mjs";
 
@@ -15,7 +15,7 @@ const TICK = 10e3;       // open, closed, titles, attention: what no file event 
 const subs = new Map();  // hours -> Set of responses
 const sent = new Map();  // hours -> the last canvas pushed, without its time
 const changed = new Set();
-let timer = null, busy = false, watcher = null, ticker = null, offShows = null;
+let timer = null, busy = false, watchers = [], ticker = null, offShows = null;
 
 const frame = (d) => `event: canvas\ndata: ${JSON.stringify(d)}\n\n`;
 const key = ({ at, ...rest }) => JSON.stringify(rest);
@@ -65,19 +65,25 @@ async function flush() {
 
 function start() {
   if (ticker) return;
-  try {
-    watcher = fs.watch(CLAUDE_PROJECTS, { recursive: true }, (_, name) => {
-      if (!name || !String(name).endsWith(".jsonl")) return;
-      changed.add(path.join(CLAUDE_PROJECTS, String(name)));
-      soon(WRITE_GAP);
-    });
-  } catch {}
+  for (const root of watchableRoots()) {
+    try {
+      const w = fs.watch(root, { recursive: true }, (_, name) => {
+        if (!name) return;
+        const s = String(name);
+        if (s.endsWith(".jsonl")) changed.add(path.join(root, s));
+        else if (!/\.(json|html?|md|png|jpe?g|webp|gif)$/i.test(s)) return;
+        soon(WRITE_GAP);
+      });
+      watchers.push(w);
+    } catch {}
+  }
   offShows = onShows(() => soon(50));
   ticker = setInterval(() => soon(0), TICK);
 }
 
 function stop() {
-  watcher?.close(); watcher = null;
+  for (const w of watchers) { try { w.close(); } catch {} }
+  watchers = [];
   offShows?.(); offShows = null;
   clearInterval(ticker); ticker = null;
   sent.clear();

@@ -53,7 +53,7 @@ export function App() {
   // ?hours=24 in the address opens on that window, as if it had been picked
   const startParams = new URLSearchParams(location.search);
   const startAt = Number(startParams.get("hours"));
-  const given = [4, 24, 72].includes(startAt) ? startAt : 0;
+  const given = [4, 24, 72, 336].includes(startAt) ? startAt : 0;
   const embedded = startParams.get("embed") === "1" || startParams.get("embed") === "true";
   const initialFilter = startParams.get("filter");
   const initialThemeParam = startParams.get("theme");
@@ -180,7 +180,7 @@ export function App() {
   const areas = scene?.frames.flatMap((f) => f.areas) || [];
   const back = place ? areas.find((a) => a.session.id === place.session) : undefined;
   const asked = linked ? areas.find((a) => a.session.id === linked) : undefined;
-  const settled = linked ? !!asked || !!data?.loading.done && hours >= 168 || gaveUp : !!back || !place || gaveUp || !!data?.loading.done;
+  const settled = linked ? !!asked || !!data?.loading.done && hours >= 336 || gaveUp : !!back || !place || gaveUp || !!data?.loading.done;
   const ready = !!scene && scene.frames.length > 0 && settled;
   const landKey = asked ? `link:${asked.session.id}` : back ? `back:${back.session.id}` : `latest:${scene?.frames[0]?.areas[0]?.session.id}`;
   const focus = useMemo(() => {
@@ -219,12 +219,12 @@ export function App() {
   // a link to a session older than this window: widen the window once everything here is read
   const found = !!linked && !!data?.projects.some((p) => p.sessions.some((s) => s.id === linked));
   useEffect(() => {
-    if (linked && data?.loading.done && data.hours === hours && !found && hours < 168) setHours(wider(hours));
+    if (linked && data?.loading.done && data.hours === hours && !found && hours < 336) setHours(wider(hours));
   }, [linked, found, data?.loading.done, hours]);
   // nothing in the last few hours: look further back, a step at a time, unless a window was picked
   const empty = !!data?.loading.done && data.hours === hours && !data.projects.some((p) => p.sessions.some((s) => s.screens.length || s.shows?.length));
   useEffect(() => {
-    if (!picked && !linked && empty && hours < 72) setHours(wider(hours));
+    if (!picked && !linked && empty && hours < 336) setHours(wider(hours));
   }, [picked, linked, empty, hours]);
 
   const onOpen = useCallback((a: Area, s: Screen, at?: { x: number; y: number }) => show({ session: a.session.id, hash: s.hash, at }), []);
@@ -271,7 +271,7 @@ export function App() {
         <p>How far back Canvas and Library load agent sessions and shown files.</p>
       </div>
       <div className="s-thin-settings-seg" role="radiogroup" aria-label="History window">
-        {[4, 24, 72].map((h) => (
+        {[4, 24, 72, 336].map((h) => (
           <button
             key={h}
             type="button"
@@ -279,7 +279,7 @@ export function App() {
             aria-checked={hours === h}
             onClick={() => pick(h)}
           >
-            {h === 4 ? "4 hours" : h === 24 ? "24 hours" : "3 days"}
+            {h === 4 ? "4 hours" : h === 24 ? "24 hours" : h === 72 ? "3 days" : "14 days"}
           </button>
         ))}
       </div>

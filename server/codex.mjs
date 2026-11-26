@@ -9,18 +9,19 @@ function entries(dir) {
   try { return fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
 }
 const known = new Map();
-export function codexFiles(since = 0, thread = null) {
+
+export function codexFilesIn(rootDir, since = 0, thread = null) {
   if (thread && !uuid.test("-" + thread + ".jsonl")) return [];
   const cached = thread && known.get(thread);
   if (cached && fs.existsSync(cached.file)) return [cached];
   const out = [];
-  for (const y of entries(CODEX_SESSIONS)) {
+  for (const y of entries(rootDir)) {
     if (!y.isDirectory() || !/^\d{4}$/.test(y.name)) continue;
-    for (const m of entries(path.join(CODEX_SESSIONS, y.name))) {
+    for (const m of entries(path.join(rootDir, y.name))) {
       if (!m.isDirectory() || !/^\d{2}$/.test(m.name)) continue;
-      for (const d of entries(path.join(CODEX_SESSIONS, y.name, m.name))) {
+      for (const d of entries(path.join(rootDir, y.name, m.name))) {
         if (!d.isDirectory() || !/^\d{2}$/.test(d.name)) continue;
-        const dir = path.join(CODEX_SESSIONS, y.name, m.name, d.name);
+        const dir = path.join(rootDir, y.name, m.name, d.name);
         for (const ent of entries(dir)) {
           const id = ent.name.match(uuid)?.[1];
           if (!id || !ent.isFile() || (thread && id !== thread)) continue;
@@ -37,7 +38,11 @@ export function codexFiles(since = 0, thread = null) {
   return out;
 }
 
-// Normalize only user/assistant messages and tool output. Never read paths found in a transcript.
+export function codexFiles(since = 0, thread = null) {
+  return codexFilesIn(CODEX_SESSIONS, since, thread);
+}
+
+// Normalize user/assistant messages and tool calls/results into Studio's transcript shape.
 export function codexEntry(entry) {
   const p = entry.payload || {}, timestamp = entry.timestamp;
   if (entry.type === "session_meta" || entry.type === "turn_context") return { timestamp, cwd: p.cwd };
@@ -47,17 +52,34 @@ export function codexEntry(entry) {
     const content = (Array.isArray(p.content) ? p.content : []).filter(b => ["input_text", "output_text"].includes(b.type)).map(b => ({ type: "text", text: b.text }));
     return { timestamp, type: p.role, message: { content } };
   }
-  if (p.type === "function_call" || p.type === "custom_tool_call") {
-    let input = {}; try { input = JSON.parse(p.arguments || "{}") || {}; } catch {}
-    return { timestamp, type: "assistant", message: { content: [{ type: "tool_use", id: p.call_id, name: p.name, input }] } };
+  if (p.type === "function_call" || p.type === "custom_tool_call" || p.type === "local_shell_call") {
+    let input = {};
+    if (typeof p.arguments === "string") {
+      try { input = JSON.parse(p.arguments || "{}") || {}; } catch { input = { raw: p.arguments }; }
+    } else if (typeof p.input === "string") {
+      input = { patch: p.input };
+    } else if (Array.isArray(p.command)) {
+      input = { command: p.command.join(" ") };
+    } else if (typeof p.command === "string") {
+      input = { command: p.command };
+    }
+    return {
+      timestamp,
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: p.call_id || "codex_tc", name: p.name || "shell", input, rawPatch: typeof p.input === "string" ? p.input : "" }] },
+    };
   }
   if (p.type !== "function_call_output" && p.type !== "custom_tool_call_output") return null;
   const content = [];
-  for (const b of Array.isArray(p.output) ? p.output : []) {
-    if (b.type === "input_text" || b.type === "text") content.push({ type: "text", text: b.text });
-    const uri = b.image_url?.url || b.image_url;
-    const match = typeof uri === "string" && uri.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,/);
-    if (match) content.push({ type: "image", source: { type: "base64", media_type: match[1], data: uri.slice(match[0].length) } });
+  if (typeof p.output === "string") {
+    content.push({ type: "text", text: p.output });
+  } else {
+    for (const b of Array.isArray(p.output) ? p.output : []) {
+      if (b.type === "input_text" || b.type === "text") content.push({ type: "text", text: b.text });
+      const uri = b.image_url?.url || b.image_url;
+      const match = typeof uri === "string" && uri.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,/);
+      if (match) content.push({ type: "image", source: { type: "base64", media_type: match[1], data: uri.slice(match[0].length) } });
+    }
   }
-  return { timestamp, type: "user", message: { content: [{ type: "tool_result", tool_use_id: p.call_id, content }] } };
+  return { timestamp, type: "user", message: { content: [{ type: "tool_result", tool_use_id: p.call_id || "codex_tc", content }] } };
 }

@@ -53,7 +53,10 @@ const INLINE = /^(?:image\/(?:png|jpeg|gif|webp)|video\/(?:mp4|webm|quicktime))$
 
 /** What to send for a show: status, headers and body. */
 export function viewResponse(show, bytes) {
-  const base = { "cache-control": "private, max-age=31536000, immutable", "x-content-type-options": "nosniff" };
+  const base = {
+    "cache-control": show.local ? "no-store" : "private, max-age=31536000, immutable",
+    "x-content-type-options": "nosniff",
+  };
   const where = show.sourcePath.replace(/^\/Users\/[^/]+/, "~");
   const meta = (extra = []) => `<p class="meta">${[...extra, where, new Date(show.createdAt).toLocaleString()].map((x) => `<span>${esc(x)}</span>`).join("")}</p>`;
   const view = show.view;
