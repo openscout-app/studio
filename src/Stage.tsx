@@ -175,7 +175,7 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
             {compare ? "Comparing with before" : "Compare with before"}
           </button>
         )}
-        <span className="mono" style={{ color: "var(--dim)" }}>{index + 1} of {screens.length}</span>
+        <span className="mono count">{index + 1} of {screens.length}</span>
       </div>
       <div className="stage-main">
         {index > 0 && <button className="s-ds-btn s-ds-btn--secondary nav prev" onClick={() => onIndex(index - 1)} aria-label="Newer screen">←</button>}

@@ -208,12 +208,14 @@ button { font: inherit; color: inherit; }
 
 /* ---- the stage: one screen, its before, and its notes */
 .stage {
-  position: fixed; inset: 0; z-index: 70; background: var(--bg);
+  position: absolute; inset: 0; z-index: 70; background: var(--bg);
   backdrop-filter: blur(6px); display: grid; grid-template-columns: minmax(0, 1fr) 360px; grid-template-rows: 52px minmax(0, 1fr);
 }
 .stage-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--line); }
 .stage-bar .title { font-size: var(--text-2xl); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stage-bar .where { color: var(--dim); font-family: var(--mono); font-size: var(--text-md); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.stage-bar .count { color: var(--dim); white-space: nowrap; flex: none; }
+.stage-bar > .s-ds-btn { flex: none; }
 .stage-main { position: relative; display: grid; min-height: 0; min-width: 0; }
 /* The screen sits centered; zoomed past the stage, it scrolls. Fitted, notes may spill past its edge. */
 .shot-scroll { position: relative; display: flex; padding: 22px; min-height: 0; min-width: 0; overflow: visible; }
@@ -503,7 +505,7 @@ button { font: inherit; color: inherit; }
 }
 .card.shown.folio .folio-more:hover { text-decoration: underline; }
 
-.reader { position: fixed; inset: 0; z-index: 70; background: var(--bg); display: grid; grid-template-rows: 52px minmax(0, 1fr) auto; }
+.reader { position: absolute; inset: 0; z-index: 70; background: var(--bg); display: grid; grid-template-rows: 52px minmax(0, 1fr) auto; }
 .reader-bar { display: flex; align-items: center; gap: 12px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--line); min-width: 0; }
 .reader-step { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .reader-count { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
