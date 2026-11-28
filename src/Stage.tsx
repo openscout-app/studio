@@ -16,6 +16,11 @@ type Props = {
 /** Text fields and notes keep the browser's own menu; everywhere else a right-click places a note. */
 const ownMenu = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.("textarea, input, [data-note]");
 
+/** Zoom is a multiple of the fitted size: 1 fits the screen in the stage. */
+const MAX_ZOOM = 8;
+const PAD = 22;
+const clampZoom = (k: number) => Math.min(MAX_ZOOM, Math.max(1, k));
+
 export function Stage({ session, project, screens, index, notes, at, pointer, scoutUp, onIndex, onClose, onNotes }: Props) {
   const sc = screens[index];
   const shot = useRef<HTMLDivElement>(null);
@@ -35,7 +40,71 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
   const [heard, setHeard] = useState(false); // the person put the session's remark away
   const mine = notes.filter((n) => n.session === session.id && n.screen.hash === sc.hash);
 
-  useEffect(() => { setDraft(at ?? null); setText(""); setWipe(0.5); setCurrent(null); }, [sc.id]);
+  // zoom: the image is drawn larger and the stage scrolls, so pins, notes and the composer keep their size
+  const scroller = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState(1);
+  const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
+  const [room, setRoom] = useState({ w: 0, h: 0 });
+  // the spot to hold still through the next zoom: a fraction of the image and where it sits in the viewport
+  const anchor = useRef<{ fx: number; fy: number; vx: number; vy: number } | null>(null);
+  const fit = nat && room.w > 0 && room.h > 0 ? Math.min(1, room.w / nat.w, room.h / nat.h) : null;
+  const size = nat && fit ? { w: Math.round(nat.w * fit * zoom), h: Math.round(nat.h * fit * zoom) } : null;
+
+  useEffect(() => { setDraft(at ?? null); setText(""); setWipe(0.5); setCurrent(null); setZoom(1); setNat(null); anchor.current = null; }, [sc.id]);
+
+  useLayoutEffect(() => {
+    // measured on the stage, not the scroller, so the scrollbars a zoom brings don't move the fit
+    const el = scroller.current?.parentElement;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setRoom({ w: el.clientWidth - PAD * 2, h: el.clientHeight - PAD * 2 }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  /** Zoom to `next`, keeping the image point under (vx, vy) of the stage where it is; the middle by default. */
+  const zoomTo = (next: number, vx?: number, vy?: number) => {
+    const el = scroller.current, s = shot.current;
+    const k = clampZoom(next);
+    if (!el || !s || k === zoomNow.current) return;
+    zoomNow.current = k;
+    const x = vx ?? el.clientWidth / 2, y = vy ?? el.clientHeight / 2;
+    anchor.current = {
+      fx: Math.min(1, Math.max(0, (el.scrollLeft + x - s.offsetLeft) / s.offsetWidth)),
+      fy: Math.min(1, Math.max(0, (el.scrollTop + y - s.offsetTop) / s.offsetHeight)),
+      vx: x, vy: y,
+    };
+    setZoom(k);
+  };
+  const zoomRef = useRef(zoomTo);
+  zoomRef.current = zoomTo;
+
+  useLayoutEffect(() => {
+    const el = scroller.current, s = shot.current, a = anchor.current;
+    if (!el || !s || !a) return;
+    anchor.current = null;
+    el.scrollLeft = s.offsetLeft + a.fx * s.offsetWidth - a.vx;
+    el.scrollTop = s.offsetTop + a.fy * s.offsetHeight - a.vy;
+  }, [zoom]);
+
+  // pinch, or ⌘/ctrl and scroll, zooms around the pointer (the canvas's own rate); plain scrolling pans
+  const zoomNow = useRef(zoom);
+  zoomNow.current = zoom;
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      zoomRef.current(zoomNow.current * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002)), e.clientX - r.left, e.clientY - r.top);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  /** 100%: the screen's own pixels. Toggles back to fit. */
+  const actual = fit ? 1 / fit : 1;
+  const pct = fit ? Math.round(fit * zoom * 100) : null;
 
   useLayoutEffect(() => {
     const el = shot.current;
@@ -51,6 +120,10 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
       if (e.key === "Escape") { if (draft) setDraft(null); else onClose(); }
       if (e.key === "ArrowLeft" && index > 0) onIndex(index - 1);
       if (e.key === "ArrowRight" && index < screens.length - 1) onIndex(index + 1);
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomRef.current(zoomNow.current * 1.25); }
+      if (e.key === "-") { e.preventDefault(); zoomRef.current(zoomNow.current * 0.8); }
+      if (e.key === "0") { e.preventDefault(); zoomRef.current(1); }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
@@ -107,8 +180,21 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
       <div className="stage-main">
         {index > 0 && <button className="s-ds-btn s-ds-btn--secondary nav prev" onClick={() => onIndex(index - 1)} aria-label="Newer screen">←</button>}
         {index < screens.length - 1 && <button className="s-ds-btn s-ds-btn--secondary nav next" onClick={() => onIndex(index + 1)} aria-label="Older screen">→</button>}
+        <div className="zoom" role="toolbar" aria-label="Zoom" data-note>
+          <button className="s-ds-btn s-ds-btn--secondary" onClick={() => zoomTo(zoom * 0.8)} disabled={zoom <= 1} aria-label="Zoom out" title="Zoom out (−)">−</button>
+          <button
+            className="s-ds-btn s-ds-btn--secondary pct" onClick={() => zoomTo(zoom > 1 ? 1 : actual)}
+            title={zoom > 1 ? "Fit the screen (0)" : "Actual pixels"} aria-label={zoom > 1 ? "Fit the screen" : "Actual pixels"}
+          >{pct === null ? "Fit" : `${pct}%`}</button>
+          <button className="s-ds-btn s-ds-btn--secondary" onClick={() => zoomTo(zoom * 1.25)} disabled={zoom >= MAX_ZOOM} aria-label="Zoom in" title="Zoom in (+)">+</button>
+        </div>
+        <div className={`shot-scroll${zoom > 1 ? " zoomed" : ""}`} ref={scroller}>
         <div className="shot" ref={shot} onClick={place} onContextMenu={place}>
-          <img src={img(sc)} alt="" draggable={false} />
+          <img
+            src={img(sc)} alt="" draggable={false}
+            onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+            style={size ? { width: size.w, height: size.h, maxWidth: "none", maxHeight: "none" } : undefined}
+          />
           {showBefore && (
             <>
               <div className="before" style={{ width: `${wipe * 100}%` }}>
@@ -179,6 +265,7 @@ export function Stage({ session, project, screens, index, notes, at, pointer, sc
               </div>
             </>
           )}
+        </div>
         </div>
       </div>
       <aside className="side" data-note>

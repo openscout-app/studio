@@ -1019,6 +1019,37 @@ function codexEntry(entry) {
   }
   return { timestamp, type: "user", message: { content: [{ type: "tool_result", tool_use_id: p.call_id || "codex_tc", content }] } };
 }
+Number(process.env.SCOUT_STUDIO_PORT) || 4801;
+function findRoot() {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 4; i++) {
+    if (fs.existsSync(path.join(dir, "package.json"))) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+}
+const ROOT = findRoot();
+path.join(ROOT, "bin", "scout-studio.mjs");
+let cachedBuild = null;
+function buildInfo() {
+  if (cachedBuild) return cachedBuild;
+  let version = "0.0.0";
+  try {
+    version = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version || version;
+  } catch {
+  }
+  const hash = crypto.createHash("sha256").update(version);
+  for (const rel of ["bin/scout-studio.mjs", "server/serve.mjs", "server/api.mjs", "dist/index.html", "dist/thin-server.mjs"]) {
+    try {
+      hash.update(fs.readFileSync(path.join(ROOT, rel)));
+    } catch {
+    }
+  }
+  cachedBuild = { version, buildId: hash.digest("hex").slice(0, 12) };
+  return cachedBuild;
+}
 function imageSize(b2) {
   if (!b2 || b2.length < 24) return null;
   if (b2.readUInt32BE(0) === 2303741511) return { w: b2.readUInt32BE(16), h: b2.readUInt32BE(20) };
@@ -5229,6 +5260,7 @@ function thumb(src, hash, size = "t") {
   return making.get(out);
 }
 const TYPES$1 = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
+const STARTED_AT = Date.now();
 async function handle(req, res) {
   const url = new URL(req.url, "http://local");
   const p = url.pathname;
@@ -5252,6 +5284,36 @@ async function handle(req, res) {
     return true;
   }
   try {
+    if (p === "/api/status" && req.method === "GET") {
+      const { version, buildId } = buildInfo();
+      return send(res, 200, {
+        ok: true,
+        product: "scout-studio",
+        version,
+        buildId,
+        pid: process.pid,
+        startedAt: STARTED_AT,
+        uptimeMs: Date.now() - STARTED_AT,
+        home: HOME,
+        claudeProjects: CLAUDE_PROJECTS,
+        codexSessions: CODEX_SESSIONS
+      }), true;
+    }
+    if (p === "/api/stop" && req.method === "POST") {
+      if (req.headers.origin || req.headers["x-scout-studio"] !== "cli") {
+        return send(res, 403, { error: "cli only" }), true;
+      }
+      const srv = req.studioServer || req.socket?.server;
+      res.once("finish", () => {
+        if (srv) {
+          srv.close();
+          setImmediate(() => srv.closeAllConnections?.());
+        }
+      });
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", connection: "close" });
+      res.end(JSON.stringify({ ok: true, pid: process.pid }));
+      return true;
+    }
     if (p === "/api/events" && req.method === "GET") {
       const hours = Math.min(24 * 30, Math.max(1, Number(url.searchParams.get("hours")) || 4));
       return await events(req, res, hours), true;
@@ -5421,7 +5483,8 @@ const handleThinRoutes = createScoutThinHttpHandler({
   }
 });
 function createStudioServer() {
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
+    req.studioServer = server;
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
     const url = new URL(req.url || "/", "http://127.0.0.1");
@@ -5449,6 +5512,7 @@ function createStudioServer() {
     });
     fs.createReadStream(file).pipe(res);
   });
+  return server;
 }
 function serve(port, host = "127.0.0.1") {
   const server = createStudioServer();
