@@ -214,7 +214,18 @@ button { font: inherit; color: inherit; }
 .stage-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--line); }
 .stage-bar .title { font-size: var(--text-2xl); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stage-bar .where { color: var(--dim); font-family: var(--mono); font-size: var(--text-md); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.stage-main { position: relative; display: grid; place-items: center; padding: 22px; min-height: 0; }
+.stage-main { position: relative; display: grid; min-height: 0; min-width: 0; }
+/* The screen sits centered; zoomed past the stage, it scrolls. Fitted, notes may spill past its edge. */
+.shot-scroll { position: relative; display: flex; padding: 22px; min-height: 0; min-width: 0; overflow: visible; }
+.shot-scroll.zoomed { overflow: auto; overscroll-behavior: contain; }
+.shot-scroll .shot { margin: auto; flex: none; }
+.shot-scroll.zoomed .shot { max-width: none; max-height: none; }
+.stage .zoom {
+  position: absolute; right: 14px; bottom: 14px; z-index: 6; display: flex; gap: 2px; padding: 3px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); box-shadow: var(--shadow);
+}
+.stage .zoom .s-ds-btn { min-width: 28px; padding-inline: 8px; }
+.stage .zoom .pct { min-width: 56px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .shot { position: relative; max-width: 100%; max-height: 100%; box-shadow: var(--shadow); border-radius: 6px; overflow: visible; cursor: crosshair; user-select: none; }
 .shot img { display: block; max-width: 100%; max-height: calc(100vh - 52px - 44px); border-radius: 6px; }
 .shot .before { position: absolute; inset: 0; overflow: hidden; border-radius: 6px 0 0 6px; pointer-events: none; }
